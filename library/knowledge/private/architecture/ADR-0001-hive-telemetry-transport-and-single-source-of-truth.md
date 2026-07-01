@@ -1,9 +1,9 @@
 # ADR-0001, hive telemetry transport and hivedoctor as the single source of truth
 
 > **Status:** Active · **Date:** 2026-07-01
-> **Supersedes:** none · **Refines:** hivenectar [`ADR-0003`](../../../../hivenectar/library/knowledge/private/architecture/ADR-0003-three-daemon-topology-and-thehive-portal.md) (the three-daemon topology) and hivenectar [`ADR-0004`](../../../../hivenectar/library/knowledge/private/architecture/ADR-0004-thehive-portal-daemon-role-and-boundaries.md) (thehive aggregates health, not Deep Lake)
+> **Supersedes:** none · **Refines:** hivenectar [`ADR-0003`](../../../../../hivenectar/library/knowledge/private/architecture/ADR-0003-three-daemon-topology-and-thehive-portal.md) (the three-daemon topology) and hivenectar [`ADR-0004`](../../../../../hivenectar/library/knowledge/private/architecture/ADR-0004-thehive-portal-daemon-role-and-boundaries.md) (thehive aggregates health, not Deep Lake)
 > **Owners:** platform, hivedoctor, the-hive
-> **Related:** the-hive [`ADR-0003`](../../../../the-hive/library/knowledge/private/architecture/ADR-0003-future-sse-streaming-for-dashboard-freshness.md), the-hive [`ADR-0004`](../../../../the-hive/library/knowledge/private/architecture/ADR-0004-portal-landing-gate-and-path-based-routing.md), [`ADR-0002`](./ADR-0002-service-registration-static-registry-plus-runtime-sqlite.md)
+> **Related:** the-hive [`ADR-0003`](../../../../../the-hive/library/knowledge/private/architecture/ADR-0003-future-sse-streaming-for-dashboard-freshness.md), the-hive [`ADR-0004`](../../../../../the-hive/library/knowledge/private/architecture/ADR-0004-portal-landing-gate-and-path-based-routing.md), [`ADR-0002`](./ADR-0002-service-registration-static-registry-plus-runtime-sqlite.md)
 
 ## Context
 
@@ -29,7 +29,7 @@ The question this ADR settles: how does telemetry flow from each service to hive
 
 1. **Services are producers, SQLite is the transport.** Each service (honeycomb, hivenectar, the-hive, and any future product) writes its own NON-SENSITIVE telemetry to its OWN local SQLite database: logs written live, health and metric check-ins written on an interval. Services never push to hivedoctor.
 2. **hivedoctor is the puller and the single source of truth.** hivedoctor polls each registered service's SQLite database (about once per second) and probes each service's `/health`, merges the results into an in-memory model, and is the one authoritative source of hive health and telemetry. Which databases/tables it polls comes from the registry ([`ADR-0002`](./ADR-0002-service-registration-static-registry-plus-runtime-sqlite.md)).
-3. **One SSE stream, hivedoctor to the-hive.** hivedoctor maintains exactly one Server-Sent-Events stream to the-hive, which renders the health rail, the `/buzzing` readiness screen, and the health page in near real time. There is NO service-to-hivedoctor SSE and no other streaming surface. This makes real the future direction the-hive [`ADR-0003`](../../../../the-hive/library/knowledge/private/architecture/ADR-0003-future-sse-streaming-for-dashboard-freshness.md) recorded as Proposed, scoped to the single hivedoctor to the-hive hop.
+3. **One SSE stream, hivedoctor to the-hive.** hivedoctor maintains exactly one Server-Sent-Events stream to the-hive, which renders the health rail, the `/buzzing` readiness screen, and the health page in near real time. There is NO service-to-hivedoctor SSE and no other streaming surface. This makes real the future direction the-hive [`ADR-0003`](../../../../../the-hive/library/knowledge/private/architecture/ADR-0003-future-sse-streaming-for-dashboard-freshness.md) recorded as Proposed, scoped to the single hivedoctor to the-hive hop.
 4. **Zero-dependency SQLite.** hivedoctor uses Node's built-in `node:sqlite` (Node >= 22.5, the `--experimental-sqlite` builtin honeycomb already relies on for its local queue), so it gains SQLite access without any external runtime dependency, preserving the watchdog's zero-dep ethos. Databases run in WAL mode so a service writes while hivedoctor reads without lock contention. hivedoctor opens service databases read-only.
 
 Memory stays bounded because hivedoctor queries windows (recent rows, aggregates) rather than loading whole logs; the portal pages request bounded slices over the SSE feed.
@@ -78,12 +78,12 @@ Rejected because it requires each service to keep serving while degraded, does n
 
 ## Relationship to the corpus ADRs
 
-- hivenectar [`ADR-0004`](../../../../hivenectar/library/knowledge/private/architecture/ADR-0004-thehive-portal-daemon-role-and-boundaries.md) decision #2 (thehive holds no Deep Lake client; it aggregates from daemon APIs) is unchanged: the portal still holds no data plane. This ADR routes fleet health/telemetry through hivedoctor as SoT rather than through per-daemon API aggregation, which is complementary (workload data via the-hive's BFF proxy per the-hive ADR-0002; fleet health/telemetry via hivedoctor's SSE per this ADR).
-- the-hive [`ADR-0003`](../../../../the-hive/library/knowledge/private/architecture/ADR-0003-future-sse-streaming-for-dashboard-freshness.md): this ADR makes its Proposed SSE real, but only for the hivedoctor to the-hive health/telemetry feed.
+- hivenectar [`ADR-0004`](../../../../../hivenectar/library/knowledge/private/architecture/ADR-0004-thehive-portal-daemon-role-and-boundaries.md) decision #2 (thehive holds no Deep Lake client; it aggregates from daemon APIs) is unchanged: the portal still holds no data plane. This ADR routes fleet health/telemetry through hivedoctor as SoT rather than through per-daemon API aggregation, which is complementary (workload data via the-hive's BFF proxy per the-hive ADR-0002; fleet health/telemetry via hivedoctor's SSE per this ADR).
+- the-hive [`ADR-0003`](../../../../../the-hive/library/knowledge/private/architecture/ADR-0003-future-sse-streaming-for-dashboard-freshness.md): this ADR makes its Proposed SSE real, but only for the hivedoctor to the-hive health/telemetry feed.
 
 ## References
 
 - `hivedoctor/src/status-page/server.ts` - the current coarse `/status.json` this telemetry feed enriches.
 - `hivedoctor/src/registry.ts` - the registry that will also record each service's SQLite database location (see [`ADR-0002`](./ADR-0002-service-registration-static-registry-plus-runtime-sqlite.md)).
-- hivenectar [`prd-004`](../../../../hivenectar/library/requirements/backlog/prd-004-hivedoctor-registry-and-thehive/prd-004-hivedoctor-registry-and-thehive-index.md) - the registry + thehive module this builds on.
+- hivenectar [`prd-004`](../../../../../hivenectar/library/requirements/backlog/prd-004-hivedoctor-registry-and-thehive/prd-004-hivedoctor-registry-and-thehive-index.md) - the registry + thehive module this builds on.
 - Forthcoming hivedoctor [`prd-001`](../../../requirements/backlog/prd-001-service-registration-and-telemetry-ingestion/prd-001-service-registration-and-telemetry-ingestion-index.md) (registration + ingestion) and [`prd-002`](../../../requirements/backlog/prd-002-telemetry-sot-sse-and-schema/prd-002-telemetry-sot-sse-and-schema-index.md) (SSE + schema) implement this ADR.

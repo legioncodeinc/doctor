@@ -1,9 +1,9 @@
 # ADR-0002, service registration: static installer registry plus runtime SQLite status
 
 > **Status:** Active · **Date:** 2026-07-01
-> **Supersedes:** none · **Refines:** hivenectar [`ADR-0004`](../../../../hivenectar/library/knowledge/private/architecture/ADR-0004-thehive-portal-daemon-role-and-boundaries.md) and the PRD-004a registry it introduced
+> **Supersedes:** none · **Refines:** hivenectar [`ADR-0004`](../../../../../hivenectar/library/knowledge/private/architecture/ADR-0004-thehive-portal-daemon-role-and-boundaries.md) and the PRD-004a registry it introduced
 > **Owners:** platform, hivedoctor
-> **Related:** [`ADR-0001`](./ADR-0001-hive-telemetry-transport-and-single-source-of-truth.md), the-apiary [`ADR-0002`](../../../../library/knowledge/private/architecture/ADR-0002-one-line-installer-product-loading-and-install-time-telemetry.md)
+> **Related:** [`ADR-0001`](./ADR-0001-hive-telemetry-transport-and-single-source-of-truth.md), the-apiary [`ADR-0002`](../../../../../library/knowledge/private/architecture/ADR-0002-one-line-installer-product-loading-and-install-time-telemetry.md)
 
 ## Context
 
@@ -15,7 +15,7 @@ hivedoctor supervises the fleet from a static JSON registry at `~/.honeycomb/hiv
 
 **Two layers: an installer-written static registry, and a service-written runtime SQLite status.**
 
-1. **Static registry (installer-owned).** The installer writes `hivedoctor.daemons.json`, extended so each entry also records where that service's SQLite database(s) live (the path[s] hivedoctor polls per [`ADR-0001`](./ADR-0001-hive-telemetry-transport-and-single-source-of-truth.md)). This layer answers "who SHOULD exist and how do I supervise it", and it must survive while a service is down, so hivedoctor still supervises, probes, and restarts a stopped service. Registration is created on install and updated on install / update / deletion of a product (the installer owns those writes; see the-apiary [`ADR-0002`](../../../../library/knowledge/private/architecture/ADR-0002-one-line-installer-product-loading-and-install-time-telemetry.md)).
+1. **Static registry (installer-owned).** The installer writes `hivedoctor.daemons.json`, extended so each entry also records where that service's SQLite database(s) live (the path[s] hivedoctor polls per [`ADR-0001`](./ADR-0001-hive-telemetry-transport-and-single-source-of-truth.md)). This layer answers "who SHOULD exist and how do I supervise it", and it must survive while a service is down, so hivedoctor still supervises, probes, and restarts a stopped service. Registration is created on install and updated on install / update / deletion of a product (the installer owns those writes; see the-apiary [`ADR-0002`](../../../../../library/knowledge/private/architecture/ADR-0002-one-line-installer-product-loading-and-install-time-telemetry.md)).
 2. **Runtime status (service-owned, SQLite).** On check-in, each service writes its runtime state (registration record, binding time, last-seen, current health, metrics) into SQLite. This is the churning, live layer.
 3. **hivedoctor merges.** hivedoctor loads the static registry into memory on boot, restart, or explicit registration/deregistration, and retains in memory who to poll for health and which SQLite databases/tables to check. It merges the static "should exist" list with the runtime status to produce the authoritative fleet model. On a service disconnect (missed check-ins + failing `/health`), hivedoctor records a last-seen time.
 
@@ -58,6 +58,6 @@ Cram last-seen/health/metrics into `hivedoctor.daemons.json`. Rejected because i
 ## References
 
 - `hivedoctor/src/registry.ts` - the static registry loader/parser this extends (schema, fallback, fail-soft).
-- hivenectar [`prd-004`](../../../../hivenectar/library/requirements/backlog/prd-004-hivedoctor-registry-and-thehive/prd-004-hivedoctor-registry-and-thehive-index.md) (PRD-004a registry + 004d registration) this builds on.
-- the-apiary [`ADR-0002`](../../../../library/knowledge/private/architecture/ADR-0002-one-line-installer-product-loading-and-install-time-telemetry.md) - the installer that creates/updates registration on install/update/delete.
+- hivenectar [`prd-004`](../../../../../hivenectar/library/requirements/backlog/prd-004-hivedoctor-registry-and-thehive/prd-004-hivedoctor-registry-and-thehive-index.md) (PRD-004a registry + 004d registration) this builds on.
+- the-apiary [`ADR-0002`](../../../../../library/knowledge/private/architecture/ADR-0002-one-line-installer-product-loading-and-install-time-telemetry.md) - the installer that creates/updates registration on install/update/delete.
 - Forthcoming hivedoctor [`prd-001`](../../../requirements/backlog/prd-001-service-registration-and-telemetry-ingestion/prd-001-service-registration-and-telemetry-ingestion-index.md) implements this ADR.
