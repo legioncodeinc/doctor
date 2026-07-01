@@ -1,0 +1,85 @@
+name: CI
+
+# The quality gate on every push to main and every PR into main for
+# @legioncodeinc/hivedoctor. It runs the SAME recipe a developer runs locally -
+# `npm run ci` (= typecheck + test) plus the build and the publish-surface
+# scanner (`pack:check`) - so a green local gate predicts a green CI
+# (local equals CI).
+#
+# WHY THREE OPERATING SYSTEMS: HiveDoctor's self-supervision renders a per-OS
+# service unit - a launchd plist (macOS), a systemd user unit (Linux), and a
+# Scheduled-Task XML / sc.exe argv (Windows) - and its argv/path logic branches
+# per platform (src/service/*). Running the FULL test suite on ubuntu + macos +
+# windows exercises that per-OS template + argv logic on each real OS, which a
+# single-OS leg cannot.
+#
+# WHAT THIS DOES NOT PROVE (explicitly out of CI scope): actually INSTALLING the
+# OS service (launchctl load / systemctl --user enable / schtasks /Create),
+# surviving a real reboot, and the daemon being restarted by the OS supervisor
+# after a crash. Those need a privileged, reboot-capable host and are validated
+# by hand / in a later wave, NOT here. This job verifies the cross-platform UNIT
+# LOGIC (templates render, argv resolves, the suite is green on each OS) and
+# that the bin builds + packs clean on each OS - nothing about live service
+# lifecycle.
+#
+# Node is pinned to the package's engine floor (22.x). The cross-OS proof is the
+# dimension that matters, so the matrix spends its axes on OS, not Node majors.
+# `npm ci` installs ONLY this package's dev deps from its own committed lockfile.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch: {}
+
+# Cancel a superseded run on the same ref (a force-push or a new commit on a PR)
+# so CI minutes are not spent on a stale commit.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Least privilege: the gate only reads the repo and runs the build/test/pack
+# scanners. No job here comments, pushes, or publishes.
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    name: HiveDoctor gate (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Setup Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: '22.x'
+          cache: npm
+
+      - name: Install (npm ci)
+        run: npm ci
+
+      # `npm run ci` = typecheck + test (the package's local gate; local equals
+      # CI). This is the cross-platform proof: the per-OS service-template + argv
+      # suite runs on each of the three OSes.
+      - name: HiveDoctor gate (typecheck + test)
+        run: npm run ci
+
+      # The build is `tsc && node esbuild.config.mjs` - both must run. Proves the
+      # single-file bin bundles on each OS (esbuild.config.mjs chmod is a no-op on
+      # win32 but exercised, and the shebang/define injection is validated).
+      - name: Build (tsc + esbuild bin)
+        run: npm run build
+
+      # Prove `npm pack`'s tarball carries no forbidden/secret filenames, no
+      # source/test/dist leak, and the bin is present - on each OS (pack-check has
+      # a win32 branch for the npm.cmd shell-out). `pack:check` runs `prepack` ->
+      # a fresh build first.
+      - name: Pack-check (tarball secret/forbidden-file + bin scan)
+        run: npm run pack:check
