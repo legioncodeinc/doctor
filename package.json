@@ -40,7 +40,6 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/legioncodeinc/honeycomb.git",
-    "directory": "hivedoctor"
+    "url": "git+https://github.com/legioncodeinc/hivedoctor.git"
   }
 }
