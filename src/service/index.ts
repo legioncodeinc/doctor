@@ -23,7 +23,7 @@
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 
-import { createExecFileRunner, type CommandRunner } from "../remediation.js";
+import { createExecFileRunner, type CommandResult, type CommandRunner } from "../remediation.js";
 import type { Logger } from "../logger.js";
 import { silentLogger } from "../logger.js";
 import type { ServiceModule, ServiceResult } from "../cli/service-stub.js";
@@ -102,24 +102,56 @@ function scopePhrase(plan: ServicePlan): string {
 	return plan.fellBackToUser ? `${base} (fell back from system - unprivileged)` : base;
 }
 
+/** Cap how much of a command's own output we ever echo back in a result message. */
+const MAX_FAILURE_DETAIL_CHARS = 200;
+
 /**
- * Run an ordered list of commands, stopping at the first hard failure. Returns the list of
- * results so the caller can build an honest message. Never throws (the runner never does).
- * A command whose failure is tolerable (e.g. `bootout` on an absent unit during reinstall)
- * is the caller's concern; here we report every result faithfully.
+ * Reduce a failed {@link CommandResult} to one short, secret-free line worth surfacing to the
+ * operator (e.g. "Access is denied.", "ENOENT"). Prefers the runner's own `detail` (a
+ * spawn-error code or timeout marker); otherwise falls back to the last non-empty line of
+ * stderr, then stdout, since most service managers (schtasks, launchctl, systemctl) print
+ * their real error there and a generic "a command failed" with no reason is not actionable
+ * (IRD-192's own root-cause was only discoverable by reproducing the exact call by hand).
+ * Output is a fixed-format OS/service-manager message, never a credential, but is still
+ * length-capped defensively in case a manager is unexpectedly chatty.
+ */
+function describeFailure(result: CommandResult | null): string {
+	if (result === null) return "unknown error";
+	const candidate =
+		result.detail ?? lastNonEmptyLine(result.stderr) ?? lastNonEmptyLine(result.stdout) ?? "unknown error";
+	return candidate.length > MAX_FAILURE_DETAIL_CHARS
+		? `${candidate.slice(0, MAX_FAILURE_DETAIL_CHARS)}...`
+		: candidate;
+}
+
+function lastNonEmptyLine(text: string): string | null {
+	const lines = text
+		.split(/\r?\n/)
+		.map((line) => line.trim())
+		.filter((line) => line !== "");
+	return lines.length > 0 ? (lines[lines.length - 1] ?? null) : null;
+}
+
+/**
+ * Run an ordered list of commands, stopping at nothing (every result is recorded) but
+ * reporting the first hard failure (and its result, for {@link describeFailure}). Never
+ * throws (the runner never does). A command whose failure is tolerable (e.g. `bootout` on an
+ * absent unit during reinstall) is the caller's concern; here we report every result faithfully.
  */
 async function runAll(
 	runner: CommandRunner,
 	commands: readonly ServiceCommand[],
-): Promise<{ allOk: boolean; firstFailure: ServiceCommand | null }> {
+): Promise<{ allOk: boolean; firstFailure: ServiceCommand | null; firstFailureResult: CommandResult | null }> {
 	let firstFailure: ServiceCommand | null = null;
+	let firstFailureResult: CommandResult | null = null;
 	for (const cmd of commands) {
 		const result = await runner.run(cmd.command, cmd.args, { timeoutMs: SERVICE_COMMAND_TIMEOUT_MS });
 		if (!result.ok && firstFailure === null) {
 			firstFailure = cmd;
+			firstFailureResult = result;
 		}
 	}
-	return { allOk: firstFailure === null, firstFailure };
+	return { allOk: firstFailure === null, firstFailure, firstFailureResult };
 }
 
 /**
@@ -173,14 +205,15 @@ export function createServiceModule(deps: ServiceModuleDeps): ServiceModule {
 
 			// 2) Run the manager's install argv. For schtasks the staged file path is the unit path.
 			const planForArgv: ServicePlan = unitTarget === p.unitPath ? p : { ...p, unitPath: unitTarget };
-			const { allOk, firstFailure } = await runAll(runner, installCommands(planForArgv, uid));
+			const { allOk, firstFailure, firstFailureResult } = await runAll(runner, installCommands(planForArgv, uid));
 			if (!allOk) {
 				// A manager-command failure (e.g. schtasks /Create rejecting invalid XML) is NOT a
 				// successful install: surface ok:false so the CLI maps it to a non-zero exit (IRD-192 AC-6).
-				logger.warn("service.install_command_failed", { command: firstFailure?.command });
+				const detail = describeFailure(firstFailureResult);
+				logger.warn("service.install_command_failed", { command: firstFailure?.command, detail });
 				return {
 					ok: false,
-					message: `Registered the HiveDoctor unit but a service-manager command failed (${firstFailure?.command ?? "unknown"}). It will start at next login/boot; run \`hivedoctor status\` to check.`,
+					message: `Registered the HiveDoctor unit but a service-manager command failed (${firstFailure?.command ?? "unknown"}): ${detail}. It will start at next login/boot; run \`hivedoctor status\` to check.`,
 				};
 			}
 
@@ -203,7 +236,7 @@ export function createServiceModule(deps: ServiceModuleDeps): ServiceModule {
 			}
 
 			// 1) Stop + deregister via the manager (idempotent - a missing unit is tolerated).
-			const { allOk, firstFailure } = await runAll(runner, uninstallCommands(p, uid));
+			const { allOk, firstFailure, firstFailureResult } = await runAll(runner, uninstallCommands(p, uid));
 
 			// 2) Delete the unit file so it cannot resurrect on next boot (AC-064b.5). For schtasks the
 			//    staged XML lives beside the workspace; remove that too.
@@ -218,10 +251,11 @@ export function createServiceModule(deps: ServiceModuleDeps): ServiceModule {
 			}
 
 			if (!allOk) {
-				logger.warn("service.uninstall_command_failed", { command: firstFailure?.command });
+				const detail = describeFailure(firstFailureResult);
+				logger.warn("service.uninstall_command_failed", { command: firstFailure?.command, detail });
 				return {
 					ok: false,
-					message: `Removed the HiveDoctor unit file; a deregister command (${firstFailure?.command ?? "unknown"}) reported an error (often because it was already gone).`,
+					message: `Removed the HiveDoctor unit file; a deregister command (${firstFailure?.command ?? "unknown"}) reported an error (often because it was already gone): ${detail}.`,
 				};
 			}
 			logger.info("service.uninstalled", { manager: p.manager, scope: p.scope });
