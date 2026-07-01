@@ -74,8 +74,15 @@ jobs:
     # Every step runs at this repo's root: the package.json, lockfile, build,
     # gate, and pack-check are all here (this IS the hivedoctor package repo).
     steps:
+      # persist-credentials: false so actions/checkout does NOT leave the
+      # write-scoped GITHUB_TOKEN in .git/config where later steps (npm ci, the
+      # build, npm publish) could read it (zizmor artipacked hardening). Nothing
+      # here uses git creds: npm publish authenticates via OIDC, and the GitHub
+      # Release step uses the token it is handed via the API, not git config.
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
 
       # `registry-url` is REQUIRED for OIDC Trusted Publishing to engage (writes
       # the explicit registry into ~/.npmrc so npm enters the npmjs auth path).
@@ -217,13 +224,46 @@ jobs:
             echo "OIDC id-token endpoint: ABSENT (no OIDC identity - check 'id-token: write' + org Actions policy)"
           fi
 
+      # Idempotency guard so the publish tail is rerunnable. If a prior run
+      # published to npm but then FAILED before minting the GitHub Release, a
+      # naive rerun would die here ("cannot publish over an existing version")
+      # and never reach the Release step. Probe whether THIS exact version is
+      # already on the registry; if so, skip only the upload (below) so the rerun
+      # can still create the Release. Fail-closed: only a genuine 404 (not
+      # published) sets exists=false; any other npm error (network/registry/auth)
+      # aborts rather than guessing the publish state. `npm view` reads public
+      # metadata and needs no auth. Real-publish mode only.
+      - name: Check whether this version is already on npm
+        id: npm_version
+        if: ${{ steps.mode.outputs.publish == 'true' }}
+        run: |
+          PKG_NAME="$(node -p "require('./package.json').name")"
+          PKG_VERSION="$(node -p "require('./package.json').version")"
+          set +e
+          VIEW_OUTPUT="$(npm view "$PKG_NAME@$PKG_VERSION" version --json 2>&1)"
+          STATUS=$?
+          set -e
+          if [ "$STATUS" -eq 0 ]; then
+            echo "Already on the registry: $PKG_NAME@$PKG_VERSION. Skipping the upload; the rerun will go straight to the GitHub Release."
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          elif echo "$VIEW_OUTPUT" | grep -q 'E404'; then
+            echo "Not yet on the registry: $PKG_NAME@$PKG_VERSION. Will publish."
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::\`npm view $PKG_NAME@$PKG_VERSION\` failed with a non-404 error; refusing to guess the publish state. Output below."
+            echo "$VIEW_OUTPUT"
+            exit "$STATUS"
+          fi
+
       # Publish. `prepack` (= npm run build) runs again inside `npm publish`, so
       # the tarball is always built from the just-checked-out tree.
       #   --provenance   : emit the OIDC supply-chain attestation (needs id-token).
       #   --access public: scoped packages default to restricted; publish public.
-      # Auth is TOKENLESS via OIDC (npm >= 11.5.1, ensured above).
+      # Auth is TOKENLESS via OIDC (npm >= 11.5.1, ensured above). Skipped when
+      # the version is already on npm (the rerun path) so the Release step below
+      # can still run.
       - name: Publish (real)
-        if: ${{ steps.mode.outputs.publish == 'true' }}
+        if: ${{ steps.mode.outputs.publish == 'true' && steps.npm_version.outputs.exists != 'true' }}
         run: npm publish --provenance --access public
         env:
           # `prepack` rebuilds the bundle here, so the published tarball needs the
