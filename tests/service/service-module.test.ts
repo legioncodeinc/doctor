@@ -115,6 +115,10 @@ describe("install - writes the unit file then runs the manager argv", () => {
 		const result = await module.install();
 		expect(result.ok).toBe(false);
 		expect(result.message).toContain("service-manager command failed");
+		// The real stderr is surfaced too, not just "a command failed" with no reason (a prior
+		// version of this message dropped the actual cause, which is what made the real-world
+		// Windows schtasks "Access is denied" failure undiagnosable without a manual repro).
+		expect(result.message).toContain("boom");
 	});
 
 	// IRD-192 AC-6 (Windows root-cause scenario): a failed `schtasks /Create` resolves ok:false so
@@ -138,9 +142,27 @@ describe("install - writes the unit file then runs the manager argv", () => {
 		const result = await module.install();
 		expect(result.ok).toBe(false);
 		expect(result.message).toContain("service-manager command failed");
+		// The exact IRD-192 root-cause stderr is surfaced verbatim, so a future occurrence of
+		// this failure mode is diagnosable from the CLI's own output alone.
+		expect(result.message).toContain("incorrectly formatted or out of range");
 		// The staged XML (now with PT1M) is still laid down for inspection.
 		const staged = "C:\\Users\\t/.honeycomb/hivedoctor/hivedoctor-task.xml";
 		expect(fs.files.get(staged)).toContain("<Interval>PT1M</Interval>");
+	});
+
+	it("a failure detail longer than the cap is truncated with an ellipsis, never silently dropped", async () => {
+		const longLine = "x".repeat(500);
+		const runner = createRecordingRunner(() => ({ ok: false, code: 1, stdout: "", stderr: longLine }));
+		const module = createServiceModule({
+			execPath: "/usr/bin/hivedoctor",
+			runner,
+			fs: createMemoryFs(),
+			environment: fixedEnv({ platform: "linux" }),
+		});
+		const result = await module.install();
+		expect(result.ok).toBe(false);
+		expect(result.message).toContain(`${"x".repeat(200)}...`);
+		expect(result.message).not.toContain(longLine);
 	});
 
 	it("an unsupported platform returns a clean message, never throws", async () => {
@@ -210,6 +232,7 @@ describe("uninstall - deregisters then removes the unit file (AC-064b.5)", () =>
 		const result = await module.uninstall();
 		// A deregister failure is reported (the file is still removed + the command's error surfaced).
 		expect(result.message).toContain("already gone");
+		expect(result.message).toContain("not loaded");
 	});
 });
 
