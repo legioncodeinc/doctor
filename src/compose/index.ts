@@ -31,7 +31,7 @@ import { homedir } from "node:os";
 import { createBackoff } from "../backoff.js";
 import { resolveConfig, type HiveDoctorConfig } from "../config.js";
 import { resolveDeviceId } from "../device-id.js";
-import { defaultRegistryPath, readRegistryFile, type DaemonEntry } from "../registry.js";
+import { defaultRegistryPath, readRegistryFile, RegistryError, type DaemonEntry } from "../registry.js";
 import { probeHealth } from "../health-probe.js";
 import { createIncidentLog, type IncidentStep } from "../incidents.js";
 import { createInstallLock } from "../install-lock.js";
@@ -48,6 +48,7 @@ import {
 	type RemediationLadder,
 	type RestartFn,
 } from "../remediation.js";
+import { buildEscalationRecord } from "../rungs/escalation.js";
 import { createStateStore, type StateStore } from "../state.js";
 import { createSupervisor, installCrashNet, type Supervisor, type SupervisorClock } from "../supervisor.js";
 import { readDaemonVersion } from "../cli/daemon-version.js";
@@ -241,21 +242,49 @@ function readPerDaemonEscalation(workspaceDir: string, daemonName: string): Need
 }
 
 /**
+ * The resolved supervised-daemon list plus any registry problem to surface (PRD-004d
+ * "Failure handling"). A malformed registry does NOT throw here; see {@link resolveDaemons}.
+ */
+interface ResolvedDaemons {
+	/** The daemons to supervise (always non-empty: the honeycomb primary is the floor). */
+	readonly daemons: DaemonEntry[];
+	/**
+	 * A plain-language reason when the registry file was PRESENT but malformed, so the caller can
+	 * log it and record a needs-attention banner. `null` when the registry loaded cleanly or was
+	 * simply absent (the normal additive fallback).
+	 */
+	readonly registryProblem: string | null;
+}
+
+/**
  * Resolve the supervised-daemon list (PRD-004a). Precedence:
  *   1. an explicitly-injected `daemons` list (tests drive the multi-daemon path hermetically);
  *   2. the registry file at `~/.honeycomb/hivedoctor.daemons.json` (one supervisor per entry);
  *   3. when that file is ABSENT, the single honeycomb primary entry derived from `config`
  *      (a-AC-2 - the registry is additive; a missing file must not wedge the watchdog).
- * A present-but-malformed registry file throws `RegistryError` from `readRegistryFile`.
+ *
+ * A present-but-MALFORMED registry file must NOT throw (PRD-004d "Failure handling"): throwing
+ * would exit `createHiveDoctor` -> `runWatchdog` exits non-zero -> the OS service unit's restart
+ * policy (launchd `KeepAlive` / systemd `Restart=always`) restarts hivedoctor straight into the
+ * same parse failure, i.e. a crash loop. Instead it falls back to the honeycomb primary at
+ * defaults and returns a `registryProblem` the composition root surfaces (log + needs-attention).
  */
 function resolveDaemons(
 	options: CreateHiveDoctorOptions,
 	config: HiveDoctorConfig,
 	home: string,
-): DaemonEntry[] {
-	if (options.daemons !== undefined) return [...options.daemons];
-	const fromFile = readRegistryFile(options.registryPath ?? defaultRegistryPath(home), home);
-	return fromFile ?? [honeycombEntryFromConfig(config)];
+): ResolvedDaemons {
+	if (options.daemons !== undefined) return { daemons: [...options.daemons], registryProblem: null };
+	try {
+		const fromFile = readRegistryFile(options.registryPath ?? defaultRegistryPath(home), home);
+		return { daemons: fromFile ?? [honeycombEntryFromConfig(config)], registryProblem: null };
+	} catch (error) {
+		// Malformed / unreadable registry (RegistryError) or any other parse failure: fall back to
+		// the honeycomb primary and surface the reason rather than crash-looping the watchdog.
+		const reason =
+			error instanceof RegistryError || error instanceof Error ? error.message : "unknown registry parse error";
+		return { daemons: [honeycombEntryFromConfig(config)], registryProblem: reason };
+	}
 }
 
 /** Options for {@link createHiveDoctor}. All have production defaults; tests inject seams. */
@@ -404,7 +433,7 @@ export function createHiveDoctor(options: CreateHiveDoctorOptions = {}): HiveDoc
 	// honeycomb primary fallback when no registry file is present. The per-entry PID reader lets
 	// each restart rung read its OWN pidPath (a-AC-7).
 	const home = options.home ?? homedir();
-	const daemons = resolveDaemons(options, config, home);
+	const { daemons, registryProblem } = resolveDaemons(options, config, home);
 	const readDaemonPid = options.readDaemonPid ?? defaultReadDaemonPid;
 
 	// The needs-attention store (064g) - the dashboard read seam + incident append.
@@ -413,6 +442,25 @@ export function createHiveDoctor(options: CreateHiveDoctorOptions = {}): HiveDoc
 		incidentLog: incidents,
 		logger,
 	});
+
+	// PRD-004d "Failure handling": a PRESENT-but-malformed registry file did not wedge the watchdog
+	// (resolveDaemons fell back to the honeycomb primary). Surface it so an operator fixes the file
+	// instead of silently running degraded: a loud error log AND a needs-attention record (the
+	// dashboard banner + durable incident, `escalation/needs-attention-store.ts`) recommending
+	// manual intervention. Both seams are fail-soft and never throw, so surfacing the problem can
+	// itself never re-wedge boot.
+	if (registryProblem !== null) {
+		const registryPath = options.registryPath ?? defaultRegistryPath(home);
+		logger.error("registry.malformed_fallback", { registryPath, reason: registryProblem });
+		needsAttention.record(
+			buildEscalationRecord({
+				diagnosis: `The hivedoctor daemon registry at ${registryPath} is present but malformed (${registryProblem}). hivedoctor is supervising the honeycomb primary daemon at built-in defaults until the file is fixed; any other daemons listed in the registry are NOT being supervised.`,
+				steps: [],
+				recommendedAction: "manual-intervention",
+				now: () => clock.now(),
+			}),
+		);
+	}
 
 	// Probe + version reads (injected so the assembly is hermetic in tests).
 	const probe = options.probe ?? (() => probeHealth({ healthUrl: config.healthUrl, timeoutMs: config.probeTimeoutMs }));

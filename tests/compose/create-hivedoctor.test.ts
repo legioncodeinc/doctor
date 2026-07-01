@@ -12,7 +12,7 @@
  * update engine, in-process status-page port 0) so no real timer/network/npm/daemon runs.
  */
 
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -185,6 +185,81 @@ describe("createHiveDoctor (composition root)", () => {
 			at: new Date(0).toISOString(),
 		});
 		expect(result.ok).toBe(true);
+		await doctor.stop();
+	});
+
+	// ── PRD-004d "Failure handling": a malformed registry must not wedge the watchdog ──────────
+	// A shared builder that drives resolveDaemons over a real on-disk registry file at a known
+	// workspaceDir (so the needs-attention.json surface can be read back).
+	function buildWithRegistry(registryPath: string): { doctor: ReturnType<typeof createHiveDoctor>; workspaceDir: string } {
+		const workspaceDir = makeTmp();
+		const doctor = createHiveDoctor({
+			config: { ...resolveConfig({}), workspaceDir },
+			env: {},
+			logger: silentLogger,
+			clock: fakeClock(),
+			runner: fakeRunner().runner,
+			probe: async (): Promise<HealthClassification> => ({ kind: "ok" }),
+			statusPagePort: 0,
+			registryPath,
+		});
+		return { doctor, workspaceDir };
+	}
+
+	it("a MALFORMED registry does not crash boot: falls back to honeycomb + records needs-attention", async () => {
+		const registryPath = join(makeTmp(), "hivedoctor.daemons.json");
+		writeFileSync(registryPath, "{ this is not valid json", "utf8");
+
+		// The crux: construction must NOT throw (throwing would crash-loop under the service unit).
+		const { doctor, workspaceDir } = buildWithRegistry(registryPath);
+
+		// Fell back to supervising exactly the honeycomb primary.
+		expect(doctor.supervisors).toHaveLength(1);
+
+		// Surfaced to the operator: needs-attention.json recorded with a manual-intervention
+		// recommendation and the offending path in the diagnosis (the dashboard banner seam).
+		const naPath = join(workspaceDir, "needs-attention.json");
+		expect(existsSync(naPath)).toBe(true);
+		const na = JSON.parse(readFileSync(naPath, "utf8")) as {
+			resolved: boolean;
+			escalation: { recommendedAction: string; diagnosis: string };
+		};
+		expect(na.resolved).toBe(false);
+		expect(na.escalation.recommendedAction).toBe("manual-intervention");
+		expect(na.escalation.diagnosis).toContain(registryPath);
+
+		await doctor.stop();
+	});
+
+	it("an ABSENT registry falls back silently (a-AC-2): honeycomb primary, no needs-attention record", async () => {
+		const registryPath = join(makeTmp(), "does-not-exist.json");
+		const { doctor, workspaceDir } = buildWithRegistry(registryPath);
+
+		expect(doctor.supervisors).toHaveLength(1);
+		// Absent is the normal additive fallback, NOT a problem: nothing is surfaced.
+		expect(existsSync(join(workspaceDir, "needs-attention.json"))).toBe(false);
+
+		await doctor.stop();
+	});
+
+	it("a VALID registry spawns one supervisor per entry with no registry problem (a-AC-1)", async () => {
+		const registryPath = join(makeTmp(), "hivedoctor.daemons.json");
+		writeFileSync(
+			registryPath,
+			JSON.stringify({
+				daemons: [
+					{ name: "honeycomb", healthUrl: "http://127.0.0.1:3850/health", pidPath: "~/.honeycomb/daemon.pid" },
+					{ name: "thehive", healthUrl: "http://127.0.0.1:3853/health", pidPath: "~/.honeycomb/thehive.pid" },
+					{ name: "hivenectar", healthUrl: "http://127.0.0.1:3854/health", pidPath: "~/.honeycomb/hivenectar.pid" },
+				],
+			}),
+			"utf8",
+		);
+		const { doctor, workspaceDir } = buildWithRegistry(registryPath);
+
+		expect(doctor.supervisors).toHaveLength(3);
+		expect(existsSync(join(workspaceDir, "needs-attention.json"))).toBe(false);
+
 		await doctor.stop();
 	});
 
