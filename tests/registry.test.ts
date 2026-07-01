@@ -2,6 +2,11 @@
  * Registry loader tests (PRD-004a US-1): defensive parse of the supervised-daemon file,
  * absent-file fallback (a-AC-2), missing-optional-field defaults (a-AC-3), and loud
  * failure on a present-but-malformed file.
+ *
+ * Also covers the PRD-001a extension: the optional `telemetryDbPath` field on
+ * `DaemonEntry` (see the "registry: PRD-001a telemetryDbPath extension" describe block
+ * below). That extension is purely additive; every test above it is UNCHANGED from the
+ * pre-PRD-001a baseline and still exercises the exact same PRD-004a behavior.
  */
 
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -234,5 +239,169 @@ describe("registry loader", () => {
 		expect(entries[0]?.healthUrl).toBe("http://127.0.0.1:3850/health");
 		expect(entries[1]?.healthUrl).toBe("http://localhost:3853/health");
 		expect(entries[2]?.healthUrl).toBe("http://[::1]:3854/health");
+	});
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// PRD-001a: the optional `telemetryDbPath` field extension
+// ────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Tests for the static registry parser's PRD-001a extension: the optional
+ * `telemetryDbPath` field on {@link DaemonEntry}.
+ *
+ * Coverage:
+ *   a-AC-1 - an entry with `telemetryDbPath` records it (with `~` expansion).
+ *   a-AC-2 - a legacy entry with no `telemetryDbPath` loads fine, health-probe-only
+ *            (the field is simply absent from the parsed entry).
+ *   a-AC-4 - a malformed registry still falls back / fails loud exactly as before
+ *            (PRD-004a fail-soft posture unchanged by this additive extension).
+ *   a-AC-5 - every existing PRD-004a field is preserved with identical semantics
+ *            whether or not `telemetryDbPath` is present.
+ *
+ * a-AC-3 (a LIST of database paths) is NOT implemented: the pinned Wave-0 "Contract A"
+ * in the-apiary's `library/ledger/EXECUTION_LEDGER.md` fixes `telemetryDbPath` as a
+ * single OPTIONAL string (not a string-or-array), specifically so the other Wave-1
+ * repos (honeycomb/hivenectar/the-hive) can conform to one literal shape without
+ * waiting on hivedoctor's code to exist. See the ledger note left on that AC row.
+ */
+describe("registry: PRD-001a telemetryDbPath extension", () => {
+	// Reuses the outer `dir` (fresh per test via the module-level beforeEach/afterEach
+	// above) for where the registry FILE lives, and the same `HOME` constant the
+	// pre-existing PRD-004a tests use for `~`-expansion assertions -- no separate tmp
+	// dir needed, matching the file's existing convention exactly.
+
+	it("a-AC-1: an entry with telemetryDbPath records the path with ~ expanded", () => {
+		const path = writeRegistry(
+			JSON.stringify({
+				daemons: [
+					{
+						name: "honeycomb",
+						healthUrl: "http://127.0.0.1:3850/health",
+						pidPath: "~/.honeycomb/daemon.pid",
+						telemetryDbPath: "~/.honeycomb/telemetry/honeycomb.sqlite",
+					},
+				],
+			}),
+		);
+
+		const entries = readRegistryFile(path, HOME);
+		expect(entries).not.toBeNull();
+		expect(entries?.[0]?.telemetryDbPath).toBe(join(HOME, ".honeycomb", "telemetry", "honeycomb.sqlite"));
+	});
+
+	it("a-AC-1: an absolute telemetryDbPath (no leading ~) is preserved verbatim", () => {
+		const absolutePath = join(HOME, "abs", "svc.sqlite");
+		const path = writeRegistry(
+			JSON.stringify({ daemons: [{ name: "hivenectar", healthUrl: "http://127.0.0.1:3854/health", telemetryDbPath: absolutePath }] }),
+		);
+
+		const entries = readRegistryFile(path, HOME);
+		expect(entries?.[0]?.telemetryDbPath).toBe(absolutePath);
+	});
+
+	it("a-AC-2: a legacy entry with no telemetryDbPath field loads without error, health-probe-only", () => {
+		const path = writeRegistry(
+			JSON.stringify({ daemons: [{ name: "honeycomb", healthUrl: "http://127.0.0.1:3850/health", pidPath: "~/.honeycomb/daemon.pid" }] }),
+		);
+
+		const entries = readRegistryFile(path, HOME);
+		expect(entries).not.toBeNull();
+		expect(entries).toHaveLength(1);
+		// Health-probe-only: the optional field is simply absent, never a placeholder/empty string.
+		expect(entries?.[0]?.telemetryDbPath).toBeUndefined();
+		expect("telemetryDbPath" in (entries?.[0] ?? {})).toBe(false);
+	});
+
+	it("a-AC-2: an empty-string or non-string telemetryDbPath is treated as absent (health-probe-only), not an error", () => {
+		const path = writeRegistry(
+			JSON.stringify({
+				daemons: [
+					{ name: "honeycomb", healthUrl: "http://127.0.0.1:3850/health", telemetryDbPath: "" },
+					{ name: "hivenectar", healthUrl: "http://127.0.0.1:3854/health", telemetryDbPath: 42 },
+					{ name: "thehive", healthUrl: "http://127.0.0.1:3853/health", telemetryDbPath: null },
+				],
+			}),
+		);
+
+		const entries = readRegistryFile(path, HOME);
+		expect(entries).toHaveLength(3);
+		for (const entry of entries ?? []) expect(entry.telemetryDbPath).toBeUndefined();
+	});
+
+	it("a-AC-2/honeycombFallbackEntry: the a-AC-2 fallback entry has no telemetryDbPath (unchanged floor behavior)", () => {
+		const entry = honeycombFallbackEntry(HOME);
+		expect(entry.telemetryDbPath).toBeUndefined();
+	});
+
+	it("a-AC-4: a malformed registry still throws RegistryError (fail-soft posture unaffected by the additive field)", () => {
+		const path = writeRegistry("{ not valid json");
+		expect(() => readRegistryFile(path, HOME)).toThrow(RegistryError);
+	});
+
+	it("a-AC-4: an absent registry file still falls back to the honeycomb primary via loadRegistry", () => {
+		const missing = join(dir, "does-not-exist.json");
+		const entries = loadRegistry({ registryPath: missing, home: HOME });
+		expect(entries).toHaveLength(1);
+		expect(entries[0]?.name).toBe("honeycomb");
+		expect(entries[0]?.telemetryDbPath).toBeUndefined();
+	});
+
+	it("a-AC-5: every existing PRD-004a field is preserved with identical semantics alongside telemetryDbPath", () => {
+		const path = writeRegistry(
+			JSON.stringify({
+				daemons: [
+					{
+						name: "hivenectar",
+						healthUrl: "http://127.0.0.1:3854/health",
+						pidPath: "~/.honeycomb/hivenectar.pid",
+						probeIntervalMs: 15_000,
+						startupGraceMs: 45_000,
+						restartGiveUpThreshold: 5,
+						restartCooldownMs: 2_500,
+						telemetryDbPath: "~/.honeycomb/telemetry/hivenectar.sqlite",
+					},
+				],
+			}),
+		);
+
+		const entries = readRegistryFile(path, HOME);
+		const entry = entries?.[0];
+		expect(entry).toEqual({
+			name: "hivenectar",
+			healthUrl: "http://127.0.0.1:3854/health",
+			pidPath: join(HOME, ".honeycomb", "hivenectar.pid"),
+			probeIntervalMs: 15_000,
+			startupGraceMs: 45_000,
+			restartGiveUpThreshold: 5,
+			restartCooldownMs: 2_500,
+			telemetryDbPath: join(HOME, ".honeycomb", "telemetry", "hivenectar.sqlite"),
+		});
+	});
+
+	it("a-AC-5: an entry without telemetryDbPath parses every other field identically to pre-PRD-001a behavior", () => {
+		const path = writeRegistry(
+			JSON.stringify({
+				daemons: [
+					{
+						name: "thehive",
+						healthUrl: "http://127.0.0.1:3853/health",
+						pidPath: "~/.honeycomb/thehive.pid",
+						probeIntervalMs: 20_000,
+					},
+				],
+			}),
+		);
+
+		const entries = readRegistryFile(path, HOME);
+		expect(entries?.[0]).toEqual({
+			name: "thehive",
+			healthUrl: "http://127.0.0.1:3853/health",
+			pidPath: join(HOME, ".honeycomb", "thehive.pid"),
+			probeIntervalMs: 20_000,
+			startupGraceMs: 60_000,
+			restartGiveUpThreshold: 3,
+			restartCooldownMs: 5_000,
+		});
 	});
 });

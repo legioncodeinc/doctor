@@ -1,9 +1,16 @@
 /**
- * HiveDoctor supervised-daemon registry (PRD-004a).
+ * HiveDoctor supervised-daemon registry (PRD-004a; extended by hivedoctor PRD-001a).
  *
  * hivedoctor no longer supervises a single hard-coded daemon: it reads a static JSON
  * registry file on boot and spawns one supervisor per listed daemon. This module owns
  * the registry file's schema and its DEFENSIVE parse.
+ *
+ * PRD-001a adds ONE new OPTIONAL field, {@link DaemonEntry.telemetryDbPath}: the path to
+ * the service's own runtime telemetry SQLite database (ADR-0002 decision 1). This is
+ * purely additive -- every PRD-004a field, `coerceName`/`coerceHealthUrl`/`coercePidPath`,
+ * and the interval coercions are UNCHANGED. An entry with no `telemetryDbPath` is
+ * health-probe-only (a-AC-2): the poll loop (`ingestion/poll-loop.ts`) skips SQLite
+ * ingestion for it, preserving every existing PRD-004a behavior exactly.
  *
  * The registry file is an EXTERNAL input, so it is validated at this boundary. It is
  * hand-validated with node built-ins ONLY, mirroring the defensive-parse posture of
@@ -60,6 +67,13 @@ export interface DaemonEntry {
 	readonly restartGiveUpThreshold: number;
 	/** Cooldown after a restart hivedoctor performed for this daemon, in ms. */
 	readonly restartCooldownMs: number;
+	/**
+	 * Optional path to this service's runtime telemetry SQLite database (leading `~`
+	 * already expanded, like {@link pidPath}). Absent means health-probe-only: no SQLite
+	 * ingestion for this entry (PRD-001a a-AC-2). hivedoctor only ever opens this database
+	 * READ-ONLY (ADR-0001 decision 4, PRD-001b b-AC-3); it never creates or writes it.
+	 */
+	readonly telemetryDbPath?: string;
 }
 
 /** Options for {@link loadRegistry}. */
@@ -165,6 +179,18 @@ function coercePidPath(value: unknown, home: string, fallback: string): string {
 }
 
 /**
+ * Coerce the OPTIONAL `telemetryDbPath` field (PRD-001a): a non-empty string with `~`
+ * expanded, or `undefined` when absent/garbage. Unlike the other fields there is no
+ * built-in default to fall back to -- an absent or invalid value means "no SQLite
+ * telemetry for this service; probe `/health` only" (a-AC-2), which is a valid, common
+ * state (every legacy PRD-004a entry has no such field) rather than an error.
+ */
+function coerceTelemetryDbPath(value: unknown, home: string): string | undefined {
+	if (typeof value !== "string" || value.trim() === "") return undefined;
+	return expandTilde(value.trim(), home);
+}
+
+/**
  * Coerce and validate a required entry `name`. A registry entry with no filename-safe
  * name cannot key a per-daemon shard, so a missing/garbage name is a MALFORMED registry
  * (fail loud), not a defaulted optional field.
@@ -185,6 +211,7 @@ function parseEntry(raw: unknown, index: number, home: string): DaemonEntry {
 	}
 	const o = raw as Record<string, unknown>;
 	const defaultPidPath = join(home, ".honeycomb", "daemon.pid");
+	const telemetryDbPath = coerceTelemetryDbPath(o.telemetryDbPath, home);
 	return {
 		name: coerceName(o.name, index),
 		healthUrl: coerceHealthUrl(o.healthUrl, DEFAULTS.healthUrl),
@@ -193,6 +220,7 @@ function parseEntry(raw: unknown, index: number, home: string): DaemonEntry {
 		startupGraceMs: coercePositiveInt(o.startupGraceMs, DEFAULTS.startupGraceMs),
 		restartGiveUpThreshold: coercePositiveInt(o.restartGiveUpThreshold, DEFAULTS.restartGiveUpThreshold),
 		restartCooldownMs: coerceNonNegativeInt(o.restartCooldownMs, DEFAULTS.restartCooldownMs),
+		...(telemetryDbPath !== undefined ? { telemetryDbPath } : {}),
 	};
 }
 

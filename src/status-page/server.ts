@@ -6,10 +6,15 @@
  * purpose is comfort UX: the user has SOMETHING to look at while the primary
  * daemon (and its dashboard) is down.
  *
- * Two routes:
+ * Routes:
  *   GET /             -- minimal HTML page showing health, latest escalation,
  *                        and suggested `hivedoctor` commands.
  *   GET /status.json  -- the same data as JSON; machine-readable.
+ *   GET /events       -- OPTIONAL: the hivedoctor-to-the-hive telemetry SSE stream
+ *                        (hivedoctor PRD-002a, ADR-0001 decision 3). Only served when
+ *                        the composition root wires `onEvents` (`src/ingestion/sse.ts`);
+ *                        this module stays agnostic of the poll loop / telemetry model.
+ *                        Absent wiring means `/events` 404s like any other unknown path.
  *   Any other path    -- 404 with a short JSON body.
  *
  * Design constraints (PRD-064g hard constraints):
@@ -76,6 +81,14 @@ export interface StatusPageServerOptions {
 	readonly logger: Logger;
 	/** Injected clock for `asOf` (defaults to `Date.now`). */
 	readonly now?: () => number;
+	/**
+	 * Optional handler for `GET /events` (hivedoctor PRD-002a: the single hivedoctor-to-
+	 * the-hive telemetry SSE stream). The composition root wires this to
+	 * `src/ingestion/sse.ts`'s `handleSseRequest` bound to the running poll loop; this
+	 * module stays deliberately agnostic of SQLite/telemetry so its own tests never need
+	 * to know about the poll loop. Omitted means `/events` 404s like any other unknown path.
+	 */
+	readonly onEvents?: (req: IncomingMessage, res: ServerResponse) => void;
 }
 
 /** The status page server handle returned by {@link createStatusPageServer}. */
@@ -241,8 +254,14 @@ function handleRequest(
 	res: ServerResponse,
 	state: StatusPageStateProvider,
 	now: () => number,
+	onEvents: ((req: IncomingMessage, res: ServerResponse) => void) | undefined,
 ): void {
 	const path = req.url ?? "/";
+
+	if (path === "/events" && onEvents !== undefined) {
+		onEvents(req, res);
+		return;
+	}
 
 	if (path === "/status.json") {
 		const status = buildStatus(state, now);
@@ -290,7 +309,7 @@ export function createStatusPageServer(options: StatusPageServerOptions): Status
 
 			const s = createServer((req, res) => {
 				try {
-					handleRequest(req, res, state, now);
+					handleRequest(req, res, state, now, options.onEvents);
 				} catch (error) {
 					// A handler error must not crash the server; return 500 defensively.
 					try {
