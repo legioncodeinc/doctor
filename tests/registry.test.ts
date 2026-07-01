@@ -290,14 +290,48 @@ describe("registry: PRD-001a telemetryDbPath extension", () => {
 		expect(entries?.[0]?.telemetryDbPath).toBe(join(HOME, ".honeycomb", "telemetry", "honeycomb.sqlite"));
 	});
 
-	it("a-AC-1: an absolute telemetryDbPath (no leading ~) is preserved verbatim", () => {
-		const absolutePath = join(HOME, "abs", "svc.sqlite");
+	it("a-AC-1: an absolute telemetryDbPath already under the trusted telemetry root is preserved verbatim", () => {
+		const absolutePath = join(HOME, ".honeycomb", "telemetry", "hivenectar.sqlite");
 		const path = writeRegistry(
 			JSON.stringify({ daemons: [{ name: "hivenectar", healthUrl: "http://127.0.0.1:3854/health", telemetryDbPath: absolutePath }] }),
 		);
 
 		const entries = readRegistryFile(path, HOME);
 		expect(entries?.[0]?.telemetryDbPath).toBe(absolutePath);
+	});
+
+	it("security: a telemetryDbPath OUTSIDE ~/.honeycomb/telemetry/ falls back to undefined (health-probe-only), never opened verbatim", () => {
+		// A registry entry pointing anywhere outside the trusted telemetry root -- another
+		// app's data file, an arbitrary absolute path -- must never be honored: hivedoctor
+		// would otherwise open ANY user-readable SQLite file and, if it has Contract-B-shaped
+		// tables, broadcast its contents on the unauthenticated loopback SSE stream.
+		const outsidePath = join(HOME, "abs", "svc.sqlite");
+		const path = writeRegistry(
+			JSON.stringify({ daemons: [{ name: "hivenectar", healthUrl: "http://127.0.0.1:3854/health", telemetryDbPath: outsidePath }] }),
+		);
+
+		const entries = readRegistryFile(path, HOME);
+		expect(entries?.[0]?.telemetryDbPath).toBeUndefined();
+	});
+
+	it("security: a `..`-traversal telemetryDbPath escaping the trusted telemetry root falls back to undefined", () => {
+		const traversalPath = "~/.honeycomb/telemetry/../../../etc/passwd";
+		const path = writeRegistry(
+			JSON.stringify({ daemons: [{ name: "honeycomb", healthUrl: "http://127.0.0.1:3850/health", telemetryDbPath: traversalPath }] }),
+		);
+
+		const entries = readRegistryFile(path, HOME);
+		expect(entries?.[0]?.telemetryDbPath).toBeUndefined();
+	});
+
+	it("security: a telemetryDbPath nested inside the trusted telemetry root (a subdirectory) is preserved", () => {
+		const nestedPath = "~/.honeycomb/telemetry/nested/honeycomb.sqlite";
+		const path = writeRegistry(
+			JSON.stringify({ daemons: [{ name: "honeycomb", healthUrl: "http://127.0.0.1:3850/health", telemetryDbPath: nestedPath }] }),
+		);
+
+		const entries = readRegistryFile(path, HOME);
+		expect(entries?.[0]?.telemetryDbPath).toBe(join(HOME, ".honeycomb", "telemetry", "nested", "honeycomb.sqlite"));
 	});
 
 	it("a-AC-2: a legacy entry with no telemetryDbPath field loads without error, health-probe-only", () => {

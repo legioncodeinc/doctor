@@ -37,9 +37,10 @@
 
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
 import { DEFAULTS } from "./config.js";
+import { assertWithinBase } from "./safe-path.js";
 
 /** The three known workload daemons hivedoctor supervises. Names are parsed permissively (any filename-safe token) and narrowed against this list where useful. */
 export const KNOWN_DAEMON_NAMES = ["honeycomb", "thehive", "hivenectar"] as const;
@@ -184,10 +185,34 @@ function coercePidPath(value: unknown, home: string, fallback: string): string {
  * built-in default to fall back to -- an absent or invalid value means "no SQLite
  * telemetry for this service; probe `/health` only" (a-AC-2), which is a valid, common
  * state (every legacy PRD-004a entry has no such field) rather than an error.
+ *
+ * SECURITY (arbitrary-file-read via a poisoned registry, security-review finding): a
+ * registry entry with an unconstrained `telemetryDbPath` would let hivedoctor open ANY
+ * user-readable SQLite file and, if it happens to carry Contract-B-shaped tables, poll
+ * and forward its contents over the unauthenticated loopback SSE stream (`/events`).
+ * Contract A pins telemetry databases under `~/.honeycomb/telemetry/`; this coercion
+ * enforces that containment with {@link assertWithinBase} (the same defense-in-depth
+ * helper `pidPath`'s composed paths already route through elsewhere in this codebase).
+ * A path that escapes the trusted root degrades to `undefined` (health-probe-only),
+ * mirroring `coerceHealthUrl`'s fallback-on-invalid-input posture -- never a crash, never
+ * a silently-honored escape.
  */
 function coerceTelemetryDbPath(value: unknown, home: string): string | undefined {
 	if (typeof value !== "string" || value.trim() === "") return undefined;
-	return expandTilde(value.trim(), home);
+	const expanded = expandTilde(value.trim(), home);
+	const trustedRoot = join(home, ".honeycomb", "telemetry");
+	try {
+		// The containment CHECK resolves both sides (so a drive-letter-less absolute path
+		// on Windows compares consistently against the base, which `assertWithinBase`
+		// resolves internally), but the RETURNED value stays the un-resolved `expanded`
+		// string, matching `pidPath`'s existing "expand `~`, nothing more" contract.
+		assertWithinBase(trustedRoot, resolve(expanded));
+		return expanded;
+	} catch {
+		// Escapes the trusted telemetry root (or is relative/unresolvable): treat exactly
+		// like an absent field rather than honoring an out-of-bounds path.
+		return undefined;
+	}
 }
 
 /**
