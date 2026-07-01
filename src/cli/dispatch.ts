@@ -57,11 +57,7 @@ function isUnhealthy(c: HealthClassification): boolean {
 /** `status` (AC-064f.2 / AC-064f.6): health, service state, both versions, last heal, opt-out. */
 async function runStatus(ctx: CliContext): Promise<number> {
 	const { io, colors, deps } = ctx;
-	// Probe + version reads are injected and ALWAYS resolve a value, so this works when the
-	// daemon is down (AC-064f.6) - a down daemon shows as unreachable, not a crash.
-	const classification = await deps.probe();
-	const daemonVersion = await deps.readDaemonVersion();
-	const state = deps.readStatusState();
+	const daemonSources = deps.statusDaemons();
 	// The service state prefers the bounded ASYNC probe (wired to serviceStatus in the composition
 	// root, IRD-192 AC-5) so a registered task reports its real state, never a hardcoded "unknown".
 	// The probe is bounded by SERVICE_COMMAND_TIMEOUT_MS in the wiring; it never blocks indefinitely.
@@ -69,16 +65,45 @@ async function runStatus(ctx: CliContext): Promise<number> {
 	const serviceState = deps.serviceStateAsync !== undefined ? await deps.serviceStateAsync() : deps.serviceState();
 
 	io.out(colors.bold("HiveDoctor status"));
-	io.out(`  Daemon health:      ${colors.cyan(healthLabel(classification))}`);
 	io.out(`  HiveDoctor service: ${colors.cyan(serviceState)}`);
-	io.out(`  Daemon version:     ${daemonVersion ?? colors.dim("unknown (daemon unreachable)")}`);
 	io.out(`  HiveDoctor version: ${deps.hivedoctorVersion}`);
-	io.out(`  Last heal:          ${state.lastHealAt ?? colors.dim("never")}`);
+	for (const daemon of daemonSources) {
+		let classification: HealthClassification = { kind: "unreachable-timeout" };
+		try {
+			classification = await daemon.probe();
+		} catch {
+			// A wedged daemon must not abort reporting for other daemons.
+		}
+
+		let daemonVersion: string | null = null;
+		try {
+			daemonVersion = await daemon.readDaemonVersion();
+		} catch {
+			daemonVersion = null;
+		}
+
+		let state: { lastHealAt: string | null; lastKnownHealth: string } = {
+			lastHealAt: null,
+			lastKnownHealth: "unknown",
+		};
+		try {
+			state = daemon.readStatusState();
+		} catch {
+			state = { lastHealAt: null, lastKnownHealth: "unknown" };
+		}
+
+		io.out("");
+		io.out(colors.bold(`Daemon: ${daemon.name}`));
+		io.out(`  Daemon health:      ${colors.cyan(healthLabel(classification))}`);
+		io.out(`  Daemon version:     ${daemonVersion ?? colors.dim("unknown (daemon unreachable)")}`);
+		io.out(`  Last heal:          ${state.lastHealAt ?? colors.dim("never")}`);
+	}
 
 	// Opt-out flags - honest about which layer disabled auto-update (OD-5 / AC-064e.4).
 	const autoUpdate = deps.optOut.autoUpdateDisabled
 		? colors.yellow(`disabled (${deps.optOut.source})`)
 		: colors.green("enabled");
+	io.out("");
 	io.out(`  Auto-update:        ${autoUpdate}`);
 	if (deps.optOut.pinnedVersion !== undefined) {
 		io.out(`  Pinned version:     ${deps.optOut.pinnedVersion}`);
@@ -208,9 +233,20 @@ async function runLogs(ctx: CliContext, parsed: ParsedArgs): Promise<number> {
 	const { io, colors, deps } = ctx;
 	const limitRaw = parsed.flags["lines"];
 	const limit = typeof limitRaw === "string" && /^\d+$/.test(limitRaw) ? Number.parseInt(limitRaw, 10) : 20;
-	const lines = await deps.tailIncidents(limit);
+	const daemonRaw = parsed.flags["daemon"];
+	if (daemonRaw === true) {
+		io.err(colors.red("Flag --daemon requires a daemon name value."));
+		return EXIT_ERROR;
+	}
+	const daemonName = typeof daemonRaw === "string" && daemonRaw.trim() !== "" ? daemonRaw.trim() : undefined;
+
+	const lines = await deps.tailIncidents(limit, daemonName);
 	if (lines.length === 0) {
-		io.out(colors.dim("No incidents recorded yet."));
+		if (daemonName !== undefined) {
+			io.out(colors.dim(`No incidents recorded yet for daemon "${daemonName}".`));
+		} else {
+			io.out(colors.dim("No incidents recorded yet."));
+		}
 		return EXIT_OK;
 	}
 	for (const line of lines) io.out(line);

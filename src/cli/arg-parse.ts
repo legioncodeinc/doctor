@@ -7,7 +7,7 @@
  * surface needs and nothing more:
  *   - the FIRST positional token is the command (e.g. `status`);
  *   - `--flag` becomes a boolean true;
- *   - `--key=value` becomes a string value;
+ *   - `--key=value` and `--key value` become a string value;
  *   - everything else is collected as a positional.
  *
  * Pure: takes an argv slice (already stripped of `node` + script path by the caller) and
@@ -32,13 +32,24 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
 	const flags: Record<string, string | boolean> = {};
 	const positionals: string[] = [];
 
-	for (const token of argv) {
+	for (let index = 0; index < argv.length; index += 1) {
+		const token = argv[index];
+		if (token === undefined) continue;
 		if (token.startsWith("--")) {
 			const body = token.slice(2);
 			const eq = body.indexOf("=");
 			if (eq === -1) {
-				// `--flag` -> boolean true.
-				if (body.length > 0) flags[body] = true;
+				if (body.length > 0) {
+					const nextToken = argv[index + 1];
+					if (nextToken !== undefined && !nextToken.startsWith("--")) {
+						// `--key value` -> string value.
+						flags[body] = nextToken;
+						index += 1;
+					} else {
+						// `--flag` -> boolean true.
+						flags[body] = true;
+					}
+				}
 			} else {
 				// `--key=value` -> string value (value may be empty).
 				const key = body.slice(0, eq);

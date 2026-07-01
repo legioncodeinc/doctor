@@ -36,9 +36,18 @@ import type { NeedsAttentionFile } from "../escalation/needs-attention-store.js"
 /** Coarse health snapshot the status page reads from the supervisor. */
 export type StatusPageHealth = "ok" | "degraded" | "unreachable" | "unknown";
 
+/** One daemon row in the machine-readable status payload. */
+export interface StatusJsonDaemon {
+	readonly name: string;
+	readonly health: StatusPageHealth;
+	readonly escalation: NeedsAttentionFile | null;
+}
+
 /** The JSON shape served at GET /status.json (AC-064g.4). */
 export interface StatusJson {
 	readonly health: StatusPageHealth;
+	/** Per-daemon coarse status, for multi-daemon consumers. */
+	readonly daemons: readonly StatusJsonDaemon[];
 	/** Null when no escalation has occurred. */
 	readonly escalation: NeedsAttentionFile | null;
 	/** Suggested commands the user can run to diagnose or fix. */
@@ -51,6 +60,8 @@ export interface StatusJson {
 export interface StatusPageStateProvider {
 	/** Current coarse health. */
 	health(): StatusPageHealth;
+	/** Per-daemon coarse health and escalation rows. */
+	daemons(): readonly StatusJsonDaemon[];
 	/** Current needs-attention record, or null. */
 	escalation(): NeedsAttentionFile | null;
 }
@@ -100,7 +111,7 @@ const LOOPBACK = "127.0.0.1";
 /** Build the suggested commands for the status page based on current health + escalation. */
 function buildSuggestedCommands(
 	health: StatusPageHealth,
-	escalation: NeedsAttentionFile | null,
+	escalations: readonly (NeedsAttentionFile | null)[],
 ): readonly string[] {
 	const cmds: string[] = [];
 
@@ -109,25 +120,27 @@ function buildSuggestedCommands(
 		cmds.push("hivedoctor logs");
 	}
 
-	if (escalation !== null && !escalation.resolved) {
-		const action = escalation.escalation.recommendedAction;
-		switch (action) {
-			case "reinstall-primary":
-				cmds.push("npm install -g @legioncodeinc/honeycomb@latest");
-				break;
-			case "uninstall-conflicting-hivemind":
-				cmds.push("npm uninstall -g @deeplake/hivemind");
-				break;
-			case "clear-credentials":
-				// Deferred action -- we recommend but do not perform it (AC-064c.3 / OD-4).
-				cmds.push("# Review ~/.deeplake/credentials.json (HiveDoctor cannot clear it automatically)");
-				break;
-			case "investigate":
-			case "manual-intervention":
-				cmds.push("hivedoctor doctor");
-				break;
-			default:
-				cmds.push("hivedoctor doctor");
+	for (const escalation of escalations) {
+		if (escalation !== null && !escalation.resolved) {
+			const action = escalation.escalation.recommendedAction;
+			switch (action) {
+				case "reinstall-primary":
+					cmds.push("npm install -g @legioncodeinc/honeycomb@latest");
+					break;
+				case "uninstall-conflicting-hivemind":
+					cmds.push("npm uninstall -g @deeplake/hivemind");
+					break;
+				case "clear-credentials":
+					// Deferred action - we recommend but do not perform it (AC-064c.3 / OD-4).
+					cmds.push("# Review ~/.deeplake/credentials.json (HiveDoctor cannot clear it automatically)");
+					break;
+				case "investigate":
+				case "manual-intervention":
+					cmds.push("hivedoctor doctor");
+					break;
+				default:
+					cmds.push("hivedoctor doctor");
+			}
 		}
 	}
 
@@ -145,6 +158,8 @@ const PAGE_CSS = `
   body{font-family:system-ui,sans-serif;max-width:720px;margin:2rem auto;padding:0 1rem;line-height:1.5}
   h1{font-size:1.4rem;margin-bottom:.5rem}
   .badge{display:inline-block;padding:.2em .7em;border-radius:.3em;font-size:.9rem;font-weight:600}
+  table{border-collapse:collapse;width:100%;margin:.5rem 0 1rem}
+  th,td{padding:.45rem;border-bottom:1px solid #ddd;text-align:left;vertical-align:middle}
   .ok{background:#d4edda;color:#155724}
   .degraded{background:#fff3cd;color:#856404}
   .unreachable,.unknown{background:#f8d7da;color:#721c24}
@@ -156,6 +171,18 @@ const PAGE_CSS = `
 /** Build the minimal HTML status page. */
 function buildHtml(status: StatusJson): string {
 	const healthClass = status.health;
+	const daemonsSection =
+		status.daemons.length === 0
+			? "<p>No daemons registered.</p>"
+			: `<table>
+<thead><tr><th>Daemon</th><th>Health</th><th>Escalation</th></tr></thead>
+<tbody>${status.daemons
+	.map((daemon) => {
+		const esc = daemon.escalation !== null && !daemon.escalation.resolved ? "needs attention" : "none";
+		return `<tr><td><code>${escapeHtml(daemon.name)}</code></td><td><span class="badge ${daemon.health}">${escapeHtml(daemon.health)}</span></td><td>${escapeHtml(esc)}</td></tr>`;
+	})
+	.join("")}</tbody>
+</table>`;
 	const escalationSection =
 		status.escalation === null
 			? "<p>No escalation recorded.</p>"
@@ -170,6 +197,8 @@ function buildHtml(status: StatusJson): string {
 <h1>HiveDoctor Local Status</h1>
 <p>Health: <span class="badge ${healthClass}">${escapeHtml(status.health)}</span></p>
 <p class="muted">As of ${escapeHtml(status.asOf)}</p>
+<h2>Daemons</h2>
+${daemonsSection}
 <h2>Latest Escalation</h2>
 ${escalationSection}
 <h2>Suggested Commands</h2>
@@ -195,12 +224,14 @@ function escapeHtml(raw: string): string {
 // ── Request handler ───────────────────────────────────────────────────────────
 
 function buildStatus(state: StatusPageStateProvider, now: () => number): StatusJson {
+	const daemons = state.daemons();
 	const health = state.health();
 	const escalation = state.escalation();
 	return {
 		health,
+		daemons,
 		escalation,
-		suggestedCommands: buildSuggestedCommands(health, escalation),
+		suggestedCommands: buildSuggestedCommands(health, [escalation, ...daemons.map((d) => d.escalation)]),
 		asOf: new Date(now()).toISOString(),
 	};
 }

@@ -22,23 +22,51 @@ describe("createIncidentsTail", () => {
 	});
 
 	it("returns an empty list when no incident file exists", async () => {
-		expect(await createIncidentsTail(dir)(20)).toEqual([]);
+		expect(await createIncidentsTail(dir, ["honeycomb"])(20)).toEqual([]);
 	});
 
 	it("returns the last N lines", async () => {
 		const lines = Array.from({ length: 5 }, (_, i) => `{"id":${i}}`).join("\n");
-		writeFileSync(join(dir, "incidents.ndjson"), `${lines}\n`, "utf8");
-		const tail = createIncidentsTail(dir);
-		expect(await tail(2)).toEqual(['{"id":3}', '{"id":4}']);
+		writeFileSync(join(dir, "incidents-honeycomb.ndjson"), `${lines}\n`, "utf8");
+		const tail = createIncidentsTail(dir, ["honeycomb"]);
+		expect(await tail(2, "honeycomb")).toEqual(['{"id":3}', '{"id":4}']);
 	});
 
 	it("ignores blank lines", async () => {
-		writeFileSync(join(dir, "incidents.ndjson"), '{"id":1}\n\n{"id":2}\n', "utf8");
-		expect(await createIncidentsTail(dir)(10)).toEqual(['{"id":1}', '{"id":2}']);
+		writeFileSync(join(dir, "incidents-honeycomb.ndjson"), '{"id":1}\n\n{"id":2}\n', "utf8");
+		expect(await createIncidentsTail(dir, ["honeycomb"])(10, "honeycomb")).toEqual(['{"id":1}', '{"id":2}']);
 	});
 
 	it("falls back to a sane limit for a non-positive request", async () => {
-		writeFileSync(join(dir, "incidents.ndjson"), '{"id":1}\n', "utf8");
-		expect(await createIncidentsTail(dir)(0)).toEqual(['{"id":1}']);
+		writeFileSync(join(dir, "incidents-honeycomb.ndjson"), '{"id":1}\n', "utf8");
+		expect(await createIncidentsTail(dir, ["honeycomb"])(0, "honeycomb")).toEqual(['{"id":1}']);
+	});
+
+	it("b-AC-7: without a daemon filter, prefixes each line with its daemon name", async () => {
+		writeFileSync(join(dir, "incidents-honeycomb.ndjson"), '{"id":"h1","closedAt":"2026-07-01T00:00:00.000Z"}\n', "utf8");
+		writeFileSync(join(dir, "incidents-thehive.ndjson"), '{"id":"t1","closedAt":"2026-07-01T00:01:00.000Z"}\n', "utf8");
+		const lines = await createIncidentsTail(dir, ["honeycomb", "thehive"])(20);
+		expect(lines).toEqual([
+			'[honeycomb] {"id":"h1","closedAt":"2026-07-01T00:00:00.000Z"}',
+			'[thehive] {"id":"t1","closedAt":"2026-07-01T00:01:00.000Z"}',
+		]);
+	});
+
+	it("security: rejects a --daemon name that is not in the registry (no wrong-path read)", async () => {
+		// An unregistered daemon name is invalid CLI input; it must be rejected loudly rather than
+		// interpolated into an out-of-registry filename or silently returning an empty list.
+		const tail = createIncidentsTail(dir, ["honeycomb", "thehive"]);
+		await expect(tail(20, "hivenectar")).rejects.toThrow(/unknown daemon "hivenectar"/);
+	});
+
+	it("security: rejects a path-traversal --daemon name rather than selecting a file", async () => {
+		const tail = createIncidentsTail(dir, ["honeycomb"]);
+		await expect(tail(20, "../../etc/passwd")).rejects.toThrow(/unknown daemon/);
+	});
+
+	it("security: still reads a registered daemon's shard normally", async () => {
+		writeFileSync(join(dir, "incidents-honeycomb.ndjson"), '{"id":1}\n', "utf8");
+		const tail = createIncidentsTail(dir, ["honeycomb"]);
+		expect(await tail(20, "honeycomb")).toEqual(['{"id":1}']);
 	});
 });

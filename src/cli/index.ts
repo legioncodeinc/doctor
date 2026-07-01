@@ -15,6 +15,7 @@
  */
 
 import { createInterface } from "node:readline/promises";
+import { homedir } from "node:os";
 
 import { createHiveDoctor } from "../compose/index.js";
 import { resolveConfig } from "../config.js";
@@ -22,6 +23,7 @@ import { resolveDeviceId } from "../device-id.js";
 import { probeHealth } from "../health-probe.js";
 import { createInstallLock } from "../install-lock.js";
 import { createLogger } from "../logger.js";
+import { defaultRegistryPath, readRegistryFile, type DaemonEntry } from "../registry.js";
 import {
 	createRemediationLadder,
 	createReinstallRung,
@@ -85,8 +87,42 @@ export function buildCliContext(argv: readonly string[]): CliContext {
 	const logger = createLogger({ level: "warn" }); // The CLI is quiet unless something is wrong.
 	const colors = createColors();
 	const runner = createExecFileRunner();
+	const home = homedir();
+	const daemonEntries =
+		readRegistryFile(defaultRegistryPath(home), home) ??
+		([
+			{
+				name: "honeycomb",
+				healthUrl: config.healthUrl,
+				pidPath: config.daemonPidPath,
+				probeIntervalMs: config.probeIntervalMs,
+				startupGraceMs: config.startupGraceMs,
+				restartGiveUpThreshold: config.restartGiveUpThreshold,
+				restartCooldownMs: config.restartCooldownMs,
+			},
+		] satisfies readonly DaemonEntry[]);
 
-	const stateStore = createStateStore({ workspaceDir: config.workspaceDir, logger });
+	const daemonStateStores = daemonEntries.map((entry) => ({
+		name: entry.name,
+		healthUrl: entry.healthUrl,
+		stateStore: createStateStore({ workspaceDir: config.workspaceDir, name: entry.name, logger }),
+	}));
+	const primaryDaemon = daemonStateStores[0] ?? {
+		name: "honeycomb",
+		healthUrl: config.healthUrl,
+		stateStore: createStateStore({ workspaceDir: config.workspaceDir, name: "honeycomb", logger }),
+	};
+
+	const statusDaemons = () =>
+		daemonStateStores.map((daemon) => ({
+			name: daemon.name,
+			probe: () => probeHealth({ healthUrl: daemon.healthUrl, timeoutMs: config.probeTimeoutMs }),
+			readDaemonVersion: () => readDaemonVersion({ healthUrl: daemon.healthUrl, timeoutMs: config.probeTimeoutMs }),
+			readStatusState: () => {
+				const s = daemon.stateStore.read();
+				return { lastHealAt: s.lastHealAt, lastKnownHealth: s.lastKnownHealth };
+			},
+		}));
 	const installLock = createInstallLock({ workspaceDir: config.workspaceDir, logger });
 
 	// The SHARED per-install device id (PRD-033/064d): the daemon and HiveDoctor read/mint the
@@ -100,11 +136,11 @@ export function buildCliContext(argv: readonly string[]): CliContext {
 	}
 
 	const probe = (): Promise<HealthClassification> =>
-		probeHealth({ healthUrl: config.healthUrl, timeoutMs: config.probeTimeoutMs });
+		probeHealth({ healthUrl: primaryDaemon.healthUrl, timeoutMs: config.probeTimeoutMs });
 	// The RUNNING daemon's reported version (from `/health`). This is what `status` shows, and
 	// it is null when the daemon is down -- correct for a "what is running right now" display.
 	const readDaemonVersionFn = (): Promise<string | null> =>
-		readDaemonVersion({ healthUrl: config.healthUrl, timeoutMs: config.probeTimeoutMs });
+		readDaemonVersion({ healthUrl: primaryDaemon.healthUrl, timeoutMs: config.probeTimeoutMs });
 	// The GLOBALLY-INSTALLED package version (from `npm ls -g`). This is what the update engine
 	// and the reinstall rung's post-install verify mean by "installed": it is on disk even when
 	// the daemon is DOWN, so auto-update/repair can still establish a rollback target then.
@@ -181,14 +217,15 @@ export function buildCliContext(argv: readonly string[]): CliContext {
 		colors,
 		deps: {
 			probe,
+			statusDaemons,
 			readDaemonVersion: readDaemonVersionFn,
 			hivedoctorVersion: HIVEDOCTOR_VERSION,
 			ladder,
 			rungContextFor,
 			decideRung: (n) => ladder.decide(n),
-			readConsecutiveFailures: () => stateStore.read().consecutiveRestartFailures,
+			readConsecutiveFailures: () => primaryDaemon.stateStore.read().consecutiveRestartFailures,
 			readStatusState: () => {
-				const s = stateStore.read();
+				const s = primaryDaemon.stateStore.read();
 				return { lastHealAt: s.lastHealAt, lastKnownHealth: s.lastKnownHealth };
 			},
 			// serviceState is the SYNC coarse read the test harness injects directly; the production
@@ -205,7 +242,10 @@ export function buildCliContext(argv: readonly string[]): CliContext {
 			// `update --check` previews via previewUpdate() (READ-ONLY, never mutates); `update`
 			// applies via runUpdateTransaction(); `self-update` is the sole own-package path.
 			update: createUpdateActions(updateEngine, selfUpdate),
-			tailIncidents: createIncidentsTail(config.workspaceDir),
+			tailIncidents: createIncidentsTail(
+				config.workspaceDir,
+				daemonEntries.map((entry) => entry.name),
+			),
 		},
 	};
 }

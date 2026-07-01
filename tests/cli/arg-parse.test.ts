@@ -24,6 +24,11 @@ describe("parseArgs", () => {
 		expect(p.flags.lines).toBe("50");
 	});
 
+	it("parses --key value as a string", () => {
+		const p = parseArgs(["logs", "--daemon", "thehive"]);
+		expect(p.flags.daemon).toBe("thehive");
+	});
+
 	it("collects extra positionals after the command", () => {
 		const p = parseArgs(["heal", "now", "--yes"]);
 		expect(p.command).toBe("heal");

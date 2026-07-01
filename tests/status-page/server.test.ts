@@ -18,6 +18,7 @@ import { silentLogger } from "../../src/logger.js";
 import {
 	createStatusPageServer,
 	DEFAULT_STATUS_PAGE_PORT,
+	type StatusJsonDaemon,
 	type StatusPageHealth,
 	type StatusPageServer,
 	type StatusPageStateProvider,
@@ -44,12 +45,22 @@ function makeEscalationFile(resolved = false): NeedsAttentionFile {
 	};
 }
 
+function makeDaemon(
+	name: string,
+	health: StatusPageHealth,
+	escalation: NeedsAttentionFile | null = null,
+): StatusJsonDaemon {
+	return { name, health, escalation };
+}
+
 function makeState(
 	health: StatusPageHealth = "unreachable",
 	escalation: NeedsAttentionFile | null = null,
+	daemons: readonly StatusJsonDaemon[] = [makeDaemon("honeycomb", health, escalation)],
 ): StatusPageStateProvider {
 	return {
 		health: () => health,
+		daemons: () => daemons,
 		escalation: () => escalation,
 	};
 }
@@ -103,10 +114,39 @@ describe("AC-064g.4: status page GET /status.json returns health + escalation + 
 
 		const body = (await resp.json()) as StatusJson;
 		expect(body.health).toBe("unreachable");
+		expect(body.daemons).toEqual([
+			{
+				name: "honeycomb",
+				health: "unreachable",
+				escalation,
+			},
+		]);
 		expect(body.escalation).not.toBeNull();
 		expect(body.escalation?.escalation.recommendedAction).toBe("reinstall-primary");
 		expect(body.suggestedCommands.length).toBeGreaterThan(0);
 		expect(typeof body.asOf).toBe("string");
+	});
+
+	it("b-AC-1: returns per-daemon rows with name, health, and escalation", async () => {
+		const honeycombEscalation = makeEscalationFile(false);
+		server = createStatusPageServer({
+			port: 0,
+			state: makeState("degraded", honeycombEscalation, [
+				makeDaemon("honeycomb", "degraded", honeycombEscalation),
+				makeDaemon("thehive", "ok", null),
+				makeDaemon("hivenectar", "unreachable", null),
+			]),
+			logger: silentLogger,
+			now: () => FAKE_NOW,
+		});
+		const port = await startServer(server);
+
+		const body = (await localFetch(port, "/status.json").then((r) => r.json())) as StatusJson;
+		expect(body.daemons).toEqual([
+			{ name: "honeycomb", health: "degraded", escalation: honeycombEscalation },
+			{ name: "thehive", health: "ok", escalation: null },
+			{ name: "hivenectar", health: "unreachable", escalation: null },
+		]);
 	});
 
 	it("includes the reinstall command in suggestedCommands when recommendedAction is reinstall-primary", async () => {
@@ -218,6 +258,28 @@ describe("AC-064g.4: GET / returns HTML status page", () => {
 
 		const body = await localFetch(port, "/").then((r) => r.text());
 		expect(body).toContain("reinstall-primary");
+	});
+
+	it("b-AC-3: HTML renders one badge row per daemon", async () => {
+		server = createStatusPageServer({
+			port: 0,
+			state: makeState("degraded", null, [
+				makeDaemon("honeycomb", "ok"),
+				makeDaemon("thehive", "degraded"),
+				makeDaemon("hivenectar", "unreachable"),
+			]),
+			logger: silentLogger,
+			now: () => FAKE_NOW,
+		});
+		const port = await startServer(server);
+
+		const body = await localFetch(port, "/").then((r) => r.text());
+		expect(body).toContain("<code>honeycomb</code>");
+		expect(body).toContain("<code>thehive</code>");
+		expect(body).toContain("<code>hivenectar</code>");
+		expect(body).toContain('class="badge ok"');
+		expect(body).toContain('class="badge degraded"');
+		expect(body).toContain('class="badge unreachable"');
 	});
 });
 
