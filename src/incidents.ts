@@ -72,7 +72,7 @@ export interface Incident {
 
 /** Options for {@link createIncidentLog}. */
 export interface IncidentLogOptions {
-	/** HiveDoctor's workspace dir; `incidents.ndjson` is written under it. */
+	/** HiveDoctor's workspace dir; the incident stream is written under it. */
 	readonly workspaceDir: string;
 	/** Logger for defensive reporting of a failed write (never thrown). */
 	readonly logger: Logger;
@@ -80,6 +80,13 @@ export interface IncidentLogOptions {
 	readonly maxBytes?: number;
 	/** Injected clock for `closedAt` (defaults to `Date.now`), for deterministic tests. */
 	readonly now?: () => number;
+	/**
+	 * Optional per-daemon shard name (PRD-004a a-AC-6). When set, episodes are appended to
+	 * `incidents-<name>.ndjson` (rotated to `incidents-<name>.ndjson.1`) instead of the shared
+	 * `incidents.ndjson`, so `hivedoctor logs` (004b) can filter per daemon. Omitted for the
+	 * legacy single-daemon / process-global escalation log.
+	 */
+	readonly name?: string;
 }
 
 /** The default incident-file size cap before a single-generation rotation. */
@@ -132,6 +139,9 @@ export function triggerForClassification(kind: HealthClassification["kind"]): In
 export function createIncidentLog(options: IncidentLogOptions): IncidentLog {
 	const now = options.now ?? Date.now;
 	const maxBytes = options.maxBytes ?? DEFAULT_MAX_BYTES;
+	// Per-daemon shard (PRD-004a a-AC-6) or the legacy shared stream.
+	const fileName = options.name !== undefined && options.name !== "" ? `incidents-${options.name}.ndjson` : "incidents.ndjson";
+	const rotatedName = `${fileName}.1`;
 
 	/** Rotate when the existing file is at/over the cap. Defensive; failure is non-fatal. */
 	function rotateIfNeeded(filePath: string, rotatedPath: string): void {
@@ -180,8 +190,8 @@ export function createIncidentLog(options: IncidentLogOptions): IncidentLog {
 				// Containment: both fixed names are joined under the variable workspace dir and
 				// asserted to stay inside it (defense-in-depth + SAST taint visibility). A
 				// containment violation throws and is caught below, degrading like a write failure.
-				const filePath = resolveInBase(options.workspaceDir, "incidents.ndjson");
-				const rotatedPath = resolveInBase(options.workspaceDir, "incidents.ndjson.1");
+				const filePath = resolveInBase(options.workspaceDir, fileName);
+				const rotatedPath = resolveInBase(options.workspaceDir, rotatedName);
 				mkdirSync(options.workspaceDir, { recursive: true });
 				rotateIfNeeded(filePath, rotatedPath);
 				appendFileSync(filePath, `${JSON.stringify(incident)}\n`, "utf8");

@@ -54,7 +54,7 @@ export const COMMAND_MENU: readonly CommandMenuEntry[] = [
 	{ invocation: "self-update", summary: "Update HiveDoctor's own package (the ONLY path that does)." },
 	{ invocation: "install-service", summary: "Register HiveDoctor as an OS service (064b)." },
 	{ invocation: "uninstall-service", summary: "Unregister the HiveDoctor OS service (064b)." },
-	{ invocation: "logs", summary: "Tail the local incident log (incidents.ndjson)." },
+	{ invocation: "logs", summary: "Tail incident logs for all daemons, or one via --daemon <name>." },
 	{ invocation: "help", summary: "Show this banner and command menu." },
 ];
 

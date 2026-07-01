@@ -25,11 +25,15 @@
  * Built-ins only; all I/O behind seams so the smoke test drives the whole assembly hermetic.
  */
 
+import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
+
 import { createBackoff } from "../backoff.js";
 import { resolveConfig, type HiveDoctorConfig } from "../config.js";
 import { resolveDeviceId } from "../device-id.js";
+import { defaultRegistryPath, readRegistryFile, type DaemonEntry } from "../registry.js";
 import { probeHealth } from "../health-probe.js";
-import { createIncidentLog } from "../incidents.js";
+import { createIncidentLog, type IncidentStep } from "../incidents.js";
 import { createInstallLock } from "../install-lock.js";
 import { createLogger, type Logger, type LogLevel } from "../logger.js";
 import {
@@ -48,10 +52,20 @@ import { createStateStore, type StateStore } from "../state.js";
 import { createSupervisor, installCrashNet, type Supervisor, type SupervisorClock } from "../supervisor.js";
 import { readDaemonVersion } from "../cli/daemon-version.js";
 import { resolveOptOut, type ResolvedOptOut } from "../cli/opt-out.js";
-import { createNeedsAttentionStore, type NeedsAttentionStore } from "../escalation/needs-attention-store.js";
+import {
+	createNeedsAttentionStore,
+	type NeedsAttentionFile,
+	type NeedsAttentionStore,
+} from "../escalation/needs-attention-store.js";
 import { emitEscalationToHostedSink } from "../escalation/hosted-sink.js";
 import { emitError, emitInstallHealth, type EmitDeps } from "../telemetry/emit.js";
-import { createStatusPageServer, DEFAULT_STATUS_PAGE_PORT, type StatusPageServer } from "../status-page/server.js";
+import {
+	createStatusPageServer,
+	DEFAULT_STATUS_PAGE_PORT,
+	type StatusJsonDaemon,
+	type StatusPageHealth,
+	type StatusPageServer,
+} from "../status-page/server.js";
 import {
 	createUpdateEngine,
 	createUpdatePollLoop,
@@ -64,6 +78,7 @@ import {
 	type UpdatePollLoop,
 } from "../update/index.js";
 import { HIVEDOCTOR_VERSION } from "../version.js";
+import { resolveInBase } from "../safe-path.js";
 
 /**
  * Resolve the shared device id, with an absolute last-resort fallback. `resolveDeviceId`
@@ -92,12 +107,179 @@ export function createRealClock(): SupervisorClock {
 	};
 }
 
+/**
+ * A daemon-PID reader over the entry's own `pidPath` (PRD-004a a-AC-7). Reads the PID/lock
+ * file, parses the leading integer, and returns it (or null when the file is absent/garbage).
+ * Defensive by construction: any read/parse failure yields null so the restart rung's
+ * lock-held-and-healthy guard simply proceeds rather than crashing the watchdog.
+ */
+async function defaultReadDaemonPid(pidPath: string): Promise<number | null> {
+	try {
+		const raw = readFileSync(pidPath, "utf8").trim();
+		const pid = Number.parseInt(raw, 10);
+		return Number.isInteger(pid) && pid > 0 ? pid : null;
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * Build the honeycomb primary registry entry from the resolved {@link HiveDoctorConfig}. This
+ * is the a-AC-2 fallback used when no registry file is present: it preserves the existing
+ * single-daemon behavior INCLUDING any env overrides `resolveConfig` applied (the six
+ * per-daemon fields), rather than dropping back to bare built-in defaults.
+ */
+function honeycombEntryFromConfig(config: HiveDoctorConfig): DaemonEntry {
+	return {
+		name: "honeycomb",
+		healthUrl: config.healthUrl,
+		pidPath: config.daemonPidPath,
+		probeIntervalMs: config.probeIntervalMs,
+		startupGraceMs: config.startupGraceMs,
+		restartGiveUpThreshold: config.restartGiveUpThreshold,
+		restartCooldownMs: config.restartCooldownMs,
+	};
+}
+
+function toStatusPageHealth(value: string): StatusPageHealth {
+	return value === "ok" || value === "degraded" || value === "unreachable" ? value : "unknown";
+}
+
+function aggregateDaemonHealth(daemons: readonly StatusJsonDaemon[]): StatusPageHealth {
+	if (daemons.length === 0) return "unknown";
+	// Deterministic aggregate for backward-compatible top-level `health`:
+	// any unreachable -> unreachable; any degraded -> degraded; all unknown -> unknown;
+	// unknown mixed with non-unknown -> degraded; otherwise all ok -> ok.
+	if (daemons.some((daemon) => daemon.health === "unreachable")) return "unreachable";
+	if (daemons.some((daemon) => daemon.health === "degraded")) return "degraded";
+	if (daemons.every((daemon) => daemon.health === "unknown")) return "unknown";
+	if (daemons.some((daemon) => daemon.health === "unknown")) return "degraded";
+	return "ok";
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return value !== null && typeof value === "object";
+}
+
+function isRecommendedAction(
+	value: unknown,
+): value is
+	| "investigate"
+	| "reinstall-primary"
+	| "uninstall-conflicting-hivemind"
+	| "clear-credentials"
+	| "manual-intervention" {
+	return (
+		value === "investigate" ||
+		value === "reinstall-primary" ||
+		value === "uninstall-conflicting-hivemind" ||
+		value === "clear-credentials" ||
+		value === "manual-intervention"
+	);
+}
+
+function toIncidentStep(step: unknown): IncidentStep | null {
+	if (!isRecord(step)) return null;
+	const rung = typeof step.rung === "number" && Number.isInteger(step.rung) && step.rung > 0 ? step.rung : 1;
+	const action = typeof step.action === "string" && step.action !== "" ? step.action : "unknown";
+	const outcome =
+		step.outcome === "succeeded" || step.outcome === "failed" || step.outcome === "skipped" ? step.outcome : "failed";
+	const at = typeof step.at === "string" && step.at !== "" ? step.at : new Date(0).toISOString();
+	const detail = typeof step.detail === "string" && step.detail !== "" ? step.detail : undefined;
+	return { rung, action, outcome, at, ...(detail !== undefined ? { detail } : {}) };
+}
+
+function readPerDaemonEscalation(workspaceDir: string, daemonName: string): NeedsAttentionFile | null {
+	try {
+		const filePath = resolveInBase(workspaceDir, `incidents-${daemonName}.ndjson`);
+		const lines = readFileSync(filePath, "utf8")
+			.split("\n")
+			.map((line) => line.trim())
+			.filter((line) => line !== "");
+
+		for (let idx = lines.length - 1; idx >= 0; idx -= 1) {
+			const rawLine = lines[idx];
+			if (rawLine === undefined) continue;
+			let parsed: unknown;
+			try {
+				parsed = JSON.parse(rawLine);
+			} catch {
+				continue;
+			}
+			if (!isRecord(parsed)) continue;
+			if (!Array.isArray(parsed.steps)) continue;
+
+			const steps = parsed.steps.map(toIncidentStep).filter((step): step is IncidentStep => step !== null);
+			const escalationStep = [...steps]
+				.reverse()
+				.find((step) => step.action === "escalate" || step.action === "escalate-needs-attention");
+			if (escalationStep === undefined) continue;
+
+			const recommendedAction = isRecommendedAction(escalationStep.detail)
+				? escalationStep.detail
+				: "manual-intervention";
+			const at = typeof parsed.closedAt === "string" && parsed.closedAt !== "" ? parsed.closedAt : escalationStep.at;
+			const resolved = parsed.resolved === true;
+
+			return {
+				version: 1,
+				escalation: {
+					diagnosis: `Escalation recorded for daemon "${daemonName}".`,
+					steps,
+					recommendedAction,
+					at,
+				},
+				resolved,
+				recordedAt: at,
+				...(resolved ? { resolvedAt: at } : {}),
+			};
+		}
+	} catch {
+		// Missing shard or unreadable file means no known escalation for this daemon.
+	}
+	return null;
+}
+
+/**
+ * Resolve the supervised-daemon list (PRD-004a). Precedence:
+ *   1. an explicitly-injected `daemons` list (tests drive the multi-daemon path hermetically);
+ *   2. the registry file at `~/.honeycomb/hivedoctor.daemons.json` (one supervisor per entry);
+ *   3. when that file is ABSENT, the single honeycomb primary entry derived from `config`
+ *      (a-AC-2 - the registry is additive; a missing file must not wedge the watchdog).
+ * A present-but-malformed registry file throws `RegistryError` from `readRegistryFile`.
+ */
+function resolveDaemons(
+	options: CreateHiveDoctorOptions,
+	config: HiveDoctorConfig,
+	home: string,
+): DaemonEntry[] {
+	if (options.daemons !== undefined) return [...options.daemons];
+	const fromFile = readRegistryFile(options.registryPath ?? defaultRegistryPath(home), home);
+	return fromFile ?? [honeycombEntryFromConfig(config)];
+}
+
 /** Options for {@link createHiveDoctor}. All have production defaults; tests inject seams. */
 export interface CreateHiveDoctorOptions {
 	/** Resolved config (default: {@link resolveConfig} over the real env + home). */
 	readonly config?: HiveDoctorConfig;
 	/** The process env (for opt-out resolution). Defaults to `process.env`. */
 	readonly env?: NodeJS.ProcessEnv;
+	/**
+	 * The supervised-daemon registry (PRD-004a). When set, hivedoctor spawns one supervisor
+	 * per entry from this list (tests inject it to drive the multi-daemon path hermetically).
+	 * When omitted, the registry file is read from disk, falling back to the honeycomb primary.
+	 */
+	readonly daemons?: readonly DaemonEntry[];
+	/** Override the registry file path read when `daemons` is omitted (default: `~/.honeycomb/hivedoctor.daemons.json`). */
+	readonly registryPath?: string;
+	/** Home directory for the default registry path (default: `homedir()`). */
+	readonly home?: string;
+	/**
+	 * Per-daemon PID/lock reader (PRD-004a a-AC-7). Given an entry's `pidPath`, resolves the
+	 * running daemon's PID or null. Default reads the file from disk; tests inject a recorder so
+	 * the restart rung's lock-held-and-healthy guard is asserted against the entry's own path.
+	 */
+	readonly readDaemonPid?: (pidPath: string) => Promise<number | null>;
 	/** True when `--no-auto-update` was passed (the highest-precedence opt-out). */
 	readonly cliNoAutoUpdate?: boolean;
 	/** Logger (default: a leveled logger at `info`). */
@@ -170,8 +352,21 @@ export interface HiveDoctor {
 	start(): Promise<void>;
 	/** Disarm every loop + close the status page + remove the crash net. Idempotent. */
 	stop(): Promise<void>;
-	/** The supervisor (exposed for the smoke test to step a tick). */
+	/** The primary daemon's supervisor (exposed for the smoke test to step a tick). */
 	readonly supervisor: Supervisor;
+	/**
+	 * Every registered daemon's supervisor loop, in registry order (PRD-004a a-AC-1). `supervisor`
+	 * is `supervisors[0]` (the honeycomb primary). Exposed so a test can step each daemon's loop
+	 * independently and 004b can aggregate them for the status page.
+	 */
+	readonly supervisors: readonly Supervisor[];
+	/**
+	 * Every registered daemon's remediation ladder, in registry order (PRD-004a). `ladder` is
+	 * `ladders[0]` (the honeycomb primary). Exposed so a test can drive a NON-primary entry's
+	 * `escalate()` directly and assert its escalation hook is isolated from the shared
+	 * needs-attention store (see the isolation note on `buildEscalationHookFor` above).
+	 */
+	readonly ladders: readonly RemediationLadder[];
 	/** The auto-update poll loop (exposed so the smoke test asserts opt-out wiring). */
 	readonly pollLoop: UpdatePollLoop;
 	/** The status page server (exposed so the smoke test asserts it started). */
@@ -198,10 +393,19 @@ export function createHiveDoctor(options: CreateHiveDoctorOptions = {}): HiveDoc
 	const deviceId = options.deviceId ?? safeResolveDeviceId();
 	const runner = options.runner ?? createExecFileRunner();
 
-	// Durable state + incident log + install lock, all bound to the workspace dir.
-	const stateStore: StateStore = createStateStore({ workspaceDir: config.workspaceDir, logger });
+	// Process-global incident/escalation log + install lock, bound to the workspace dir. Per-daemon
+	// remediation state + incident episodes live in per-entry shards built in the supervisor loop
+	// below (PRD-004a a-AC-4/5/6); this shared incident log backs the process-global
+	// needs-attention store (the 064g escalation surface, which stays process-level).
 	const incidents = createIncidentLog({ workspaceDir: config.workspaceDir, logger });
 	const installLock = createInstallLock({ workspaceDir: config.workspaceDir, logger });
+
+	// Resolve the supervised-daemon registry (PRD-004a a-AC-1/2): one supervisor per entry, or the
+	// honeycomb primary fallback when no registry file is present. The per-entry PID reader lets
+	// each restart rung read its OWN pidPath (a-AC-7).
+	const home = options.home ?? homedir();
+	const daemons = resolveDaemons(options, config, home);
+	const readDaemonPid = options.readDaemonPid ?? defaultReadDaemonPid;
 
 	// The needs-attention store (064g) - the dashboard read seam + incident append.
 	const needsAttention: NeedsAttentionStore = createNeedsAttentionStore({
@@ -233,19 +437,11 @@ export function createHiveDoctor(options: CreateHiveDoctorOptions = {}): HiveDoc
 			return false;
 		});
 
-	// ── The remediation ladder with rungs 1/2/3 REGISTERED for production ──────────
-	let lastRestartAt: number | null = null;
-	const restartRung = createRestartRung({
-		restart,
-		readDaemonPid: async () => null, // 064b owns the PID/lock read; null = "no lock observed".
-		isHealthy,
-		cooldownMs: config.restartCooldownMs,
-		clock,
-		lastRestartAt: () => lastRestartAt,
-		markRestarted: (at: number) => {
-			lastRestartAt = at;
-		},
-	});
+	// ── The shared higher rungs (reinstall / uninstall) - honeycomb-primary scoped ────────
+	// Rung 1 (restart) is built PER daemon in the supervisor loop below so each entry reads its
+	// OWN pidPath + cooldown with an entry-local lastRestartAt (PRD-004a a-AC-7/a-AC-8). Rungs 2/3
+	// act on the primary honeycomb package (reinstall / uninstall-conflicting-hivemind) and are
+	// stateless factories, so they are built once and SHARED across every entry's ladder.
 	// Resolve the blessed version from the blessed channel at remediation time, fail-soft: a
 	// non-ok channel (unreachable until B-3 ships the CDN object) yields "" so the reinstall
 	// rung degrades its verify gracefully and still proceeds (it never throws or blocks).
@@ -282,20 +478,26 @@ export function createHiveDoctor(options: CreateHiveDoctorOptions = {}): HiveDoc
 				logger,
 			});
 		});
-	const escalationHook: EscalationHook = async (record): Promise<void> => {
-		// Local needs-attention store first (the dashboard read seam), then the hosted sink.
-		needsAttention.record(record);
-		await hostedEscalation(record);
+	// PRD-004a isolation: `needsAttention` backs a SINGLE process-global `needs-attention.json`
+	// (the pre-existing honeycomb dashboard read seam, `escalation/needs-attention-store.ts`).
+	// It is not sharded per-daemon. Wiring EVERY entry's ladder to a hook that writes this same
+	// file would let a non-primary daemon's escalation (e.g. hivenectar giving up) silently
+	// overwrite honeycomb's own escalation record - polluting honeycomb's dashboard banner AND
+	// the "honeycomb" row hivedoctor's own status page reads via `needsAttention.read()` below
+	// (b-AC-1/b-AC-2 require "that daemon's latest escalation", not another daemon's). Only the
+	// honeycomb entry writes to the shared file; every other entry's escalation step is already
+	// durably recorded in ITS OWN `incidents-<name>.ndjson` (`heal()` in supervisor.ts appends the
+	// escalate step to the per-entry incident builder), which `readPerDaemonEscalation` below
+	// reads back for its status-page/CLI row - no shared state, no cross-daemon contamination.
+	// The hosted telemetry sink still fires for every entry regardless (useful signal either way).
+	const buildEscalationHookFor = (entryName: string): EscalationHook => {
+		return async (record): Promise<void> => {
+			if (entryName === "honeycomb") {
+				needsAttention.record(record);
+			}
+			await hostedEscalation(record);
+		};
 	};
-
-	const ladder = createRemediationLadder({
-		rungs: [restartRung, reinstallRung, uninstallRung],
-		restartGiveUpThreshold: config.restartGiveUpThreshold,
-		logger,
-		escalationHook,
-	});
-
-	const backoff = createBackoff({ floorMs: config.backoffFloorMs, ceilingMs: config.backoffCeilingMs });
 
 	// ── Telemetry seams (PRD-064d): error stream + install-health stream ──────────
 	// Both default to the real chokepoint helpers (which already honor the opt-out gates)
@@ -317,18 +519,67 @@ export function createHiveDoctor(options: CreateHiveDoctorOptions = {}): HiveDoc
 		});
 	};
 
-	const supervisor = createSupervisor({
-		probe,
-		ladder,
-		backoff,
-		stateStore,
-		incidents,
-		logger,
-		clock,
-		probeIntervalMs: config.probeIntervalMs,
-		startupGraceMs: config.startupGraceMs,
-		onError,
-	});
+	// ── One independent supervisor per registered daemon (PRD-004a US-1/US-2/US-3) ───────
+	// Each entry gets: a dedicated probe (its healthUrl), a dedicated rung-1 restart whose guards
+	// read ITS pidPath + cooldown via an ENTRY-LOCAL lastRestartAt (a-AC-7/a-AC-8), a dedicated
+	// backoff, a dedicated ladder (its restartGiveUpThreshold + the shared higher rungs), and
+	// dedicated state-<name>.json + incidents-<name>.ndjson shards (a-AC-4/5/6). N calls to the
+	// per-instance createSupervisor factory produce N fully-independent loops.
+	interface BuiltDaemon {
+		readonly entry: DaemonEntry;
+		readonly supervisor: Supervisor;
+		readonly ladder: RemediationLadder;
+		readonly stateStore: StateStore;
+	}
+	const buildDaemon = (entry: DaemonEntry): BuiltDaemon => {
+		const entryProbe: () => ReturnType<typeof probeHealth> =
+			options.probe ?? (() => probeHealth({ healthUrl: entry.healthUrl, timeoutMs: config.probeTimeoutMs }));
+		const entryIsHealthy = async (): Promise<boolean> => (await entryProbe()).kind === "ok";
+		const entryStateStore: StateStore = createStateStore({ workspaceDir: config.workspaceDir, name: entry.name, logger });
+		const entryIncidents = createIncidentLog({ workspaceDir: config.workspaceDir, name: entry.name, logger });
+		// Entry-LOCAL restart timestamp: the cooldown gates only THIS entry's restarts (a-AC-8),
+		// never a single process-shared clock.
+		let entryLastRestartAt: number | null = null;
+		const entryRestartRung = createRestartRung({
+			restart,
+			readDaemonPid: () => readDaemonPid(entry.pidPath),
+			isHealthy: entryIsHealthy,
+			cooldownMs: entry.restartCooldownMs,
+			clock,
+			lastRestartAt: () => entryLastRestartAt,
+			markRestarted: (at: number) => {
+				entryLastRestartAt = at;
+			},
+		});
+		const entryLadder = createRemediationLadder({
+			rungs: [entryRestartRung, reinstallRung, uninstallRung],
+			restartGiveUpThreshold: entry.restartGiveUpThreshold,
+			logger,
+			escalationHook: buildEscalationHookFor(entry.name),
+		});
+		const entryBackoff = createBackoff({ floorMs: config.backoffFloorMs, ceilingMs: config.backoffCeilingMs });
+		const entrySupervisor = createSupervisor({
+			probe: entryProbe,
+			ladder: entryLadder,
+			backoff: entryBackoff,
+			stateStore: entryStateStore,
+			incidents: entryIncidents,
+			logger,
+			clock,
+			probeIntervalMs: entry.probeIntervalMs,
+			startupGraceMs: entry.startupGraceMs,
+			onError,
+		});
+		return { entry, supervisor: entrySupervisor, ladder: entryLadder, stateStore: entryStateStore };
+	};
+
+	// The primary daemon (honeycomb, listed first) backs the process-global surfaces below: the
+	// status page, the install-health snapshot, the auto-update restart re-arm, and the exposed
+	// `supervisor`/`ladder`. `daemons` is non-empty (resolveDaemons guarantees it), but the
+	// `?? honeycombEntryFromConfig` keeps the primary selection total for the type checker
+	// (noUncheckedIndexedAccess) without an unsafe assertion.
+	const primary = buildDaemon(daemons[0] ?? honeycombEntryFromConfig(config));
+	const built: BuiltDaemon[] = [primary, ...daemons.slice(1).map(buildDaemon)];
 
 	// ── Auto-update poll loop (064e), respecting the resolved opt-out precedence ───
 	const optOut = resolveOptOut({
@@ -355,7 +606,9 @@ export function createHiveDoctor(options: CreateHiveDoctorOptions = {}): HiveDoc
 			// /health (the update cannot make an already-down daemon worse).
 			restartDaemon: async (): Promise<boolean> => {
 				const restarted = await restart();
-				if (restarted) supervisor.armStartupGrace();
+				// Auto-update targets the primary honeycomb package, so re-arm the primary supervisor's
+				// startup grace on a successful restart (PRD-067) - not every entry's.
+				if (restarted) primary.supervisor.armStartupGrace();
 				return restarted;
 			},
 			verifyHealthy: isHealthy,
@@ -375,14 +628,24 @@ export function createHiveDoctor(options: CreateHiveDoctorOptions = {}): HiveDoc
 	});
 
 	// ── Local status page (064g) on the loopback comfort port ─────────────────────
+	const readDaemonStatusRows = (): StatusJsonDaemon[] =>
+		built.map(({ entry, stateStore }) => {
+			const state = stateStore.read();
+			const escalation =
+				entry.name === "honeycomb" ? needsAttention.read() : readPerDaemonEscalation(config.workspaceDir, entry.name);
+			return {
+				name: entry.name,
+				health: toStatusPageHealth(state.lastKnownHealth),
+				escalation,
+			};
+		});
+
 	const statusPage = createStatusPageServer({
 		port: options.statusPagePort ?? config.statusPagePort,
 		state: {
-			health: () => {
-				const s = stateStore.read();
-				const h = s.lastKnownHealth;
-				return h === "ok" || h === "degraded" || h === "unreachable" ? h : "unknown";
-			},
+			health: () => aggregateDaemonHealth(readDaemonStatusRows()),
+			daemons: () => readDaemonStatusRows(),
+			// Keep top-level escalation as the primary-honeycomb record for backward compatibility.
 			escalation: () => needsAttention.read(),
 		},
 		logger,
@@ -400,7 +663,8 @@ export function createHiveDoctor(options: CreateHiveDoctorOptions = {}): HiveDoc
 	 */
 	async function emitInstallHealthSnapshot(): Promise<void> {
 		try {
-			const s = stateStore.read();
+			// The install-health heartbeat reflects the primary honeycomb daemon's shard.
+			const s = primary.stateStore.read();
 			const nowMs = clock.now();
 			// Age since last confirmed heal in SECONDS (the chokepoint buckets it), or null if never.
 			const lastHealMs = s.lastHealAt !== null ? Date.parse(s.lastHealAt) : NaN;
@@ -444,15 +708,20 @@ export function createHiveDoctor(options: CreateHiveDoctorOptions = {}): HiveDoc
 
 	let uninstallCrashNet: (() => void) | null = null;
 	let running = false;
-	let supervisorRun: Promise<void> | null = null;
+	// One held run-promise per supervisor loop (PRD-004a): start() arms them all, stop() joins them.
+	let supervisorRuns: Promise<void>[] = [];
 	let pollRun: Promise<void> | null = null;
 
 	return {
-		supervisor,
+		// The exposed supervisor/ladder are the PRIMARY honeycomb daemon's (the process-global
+		// smoke-test surface); every registered daemon's own loop is armed by start() below.
+		supervisor: primary.supervisor,
+		supervisors: built.map((b) => b.supervisor),
 		pollLoop,
 		statusPage,
 		optOut,
-		ladder,
+		ladder: primary.ladder,
+		ladders: built.map((b) => b.ladder),
 
 		async start(): Promise<void> {
 			if (running) return;
@@ -473,18 +742,21 @@ export function createHiveDoctor(options: CreateHiveDoctorOptions = {}): HiveDoc
 
 			// Arm the loops. Each loop's start() resolves only when stopped, so do NOT await them
 			// here - hold the promises and let stop() resolve them. A disabled poll loop is a no-op.
-			supervisorRun = supervisor.start();
+			// One supervisor loop per registered daemon (PRD-004a a-AC-1).
+			supervisorRuns = built.map((b) => b.supervisor.start());
 			pollRun = pollLoop.start();
 			// Arm the install-health heartbeat (PRD-064d AC-064d.2): one snapshot now, then on the
 			// interval. Held like the other loops; stop() disarms it. Fail-soft per emit.
 			installHealthStopped = false;
 			installHealthRun = runInstallHealthLoop();
 			// Surface (but never rethrow) a loop that rejected unexpectedly.
-			void supervisorRun.catch((error: unknown) => {
-				logger.error("compose.supervisor_loop_threw", {
-					reason: error instanceof Error ? error.message : "unknown",
+			for (const run of supervisorRuns) {
+				void run.catch((error: unknown) => {
+					logger.error("compose.supervisor_loop_threw", {
+						reason: error instanceof Error ? error.message : "unknown",
+					});
 				});
-			});
+			}
 			void pollRun.catch((error: unknown) => {
 				logger.error("compose.poll_loop_threw", {
 					reason: error instanceof Error ? error.message : "unknown",
@@ -501,7 +773,8 @@ export function createHiveDoctor(options: CreateHiveDoctorOptions = {}): HiveDoc
 			if (!running) return;
 			running = false;
 			logger.info("compose.stop");
-			supervisor.stop();
+			// Disarm every registered daemon's supervisor loop (PRD-004a).
+			for (const b of built) b.supervisor.stop();
 			pollLoop.stop();
 			// Disarm the install-health heartbeat so its sleep returns and the loop exits.
 			installHealthStopped = true;
@@ -515,14 +788,14 @@ export function createHiveDoctor(options: CreateHiveDoctorOptions = {}): HiveDoc
 			// Let the loops unwind their final iteration.
 			try {
 				await Promise.allSettled([
-					supervisorRun ?? Promise.resolve(),
+					...supervisorRuns,
 					pollRun ?? Promise.resolve(),
 					installHealthRun ?? Promise.resolve(),
 				]);
 			} catch {
 				// allSettled never rejects; this catch is belt-and-suspenders.
 			}
-			supervisorRun = null;
+			supervisorRuns = [];
 			pollRun = null;
 			installHealthRun = null;
 			if (uninstallCrashNet !== null) {

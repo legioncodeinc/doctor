@@ -15,6 +15,7 @@ import type {
 	ConfirmFn,
 	OutputSink,
 	ServiceState,
+	StatusDaemonSource,
 	StatusStateSnapshot,
 } from "../../../src/cli/context.js";
 import { resolveOptOut, type ResolvedOptOut } from "../../../src/cli/opt-out.js";
@@ -109,6 +110,15 @@ export interface CliHarnessOptions {
 	readonly optOut?: ResolvedOptOut;
 	/** Incident log tail lines (default: none). */
 	readonly incidents?: readonly string[];
+	/** Per-daemon incident lines for `logs --daemon` and all-daemon interleave tests. */
+	readonly incidentsByDaemon?: Readonly<Record<string, readonly string[]>>;
+	/** Optional explicit per-daemon status sources for multi-daemon `status` tests. */
+	readonly statusDaemons?: readonly {
+		readonly name: string;
+		readonly classification: HealthClassification;
+		readonly daemonVersion: string | null;
+		readonly statusState: StatusStateSnapshot;
+	}[];
 	/** Whether a 064b service module is wired (default: absent). */
 	readonly serviceModule?: CliDeps["serviceModule"];
 	/** Force color on/off (default off, so assertions are plain text). */
@@ -132,6 +142,27 @@ export function buildCliHarness(options: CliHarnessOptions = {}): CliHarness {
 	const ladder = options.ladder ?? fakeLadder({ decideResult: options.decision });
 	const classification = options.classification ?? { kind: "ok" as const };
 	const daemonVersion = options.daemonVersion === undefined ? "1.2.3" : options.daemonVersion;
+	const defaultStatusState = options.statusState ?? { lastHealAt: null, lastKnownHealth: "unknown" };
+	const daemonSources: readonly StatusDaemonSource[] =
+		options.statusDaemons?.map((daemon) => ({
+			name: daemon.name,
+			probe: async () => daemon.classification,
+			readDaemonVersion: async () => daemon.daemonVersion,
+			readStatusState: () => daemon.statusState,
+		})) ?? [
+			{
+				name: "honeycomb",
+				probe: async () => classification,
+				readDaemonVersion: async () => daemonVersion,
+				readStatusState: () => defaultStatusState,
+			},
+		];
+	const primaryDaemon = daemonSources[0] ?? {
+		name: "honeycomb",
+		probe: async () => ({ kind: "ok" as const }),
+		readDaemonVersion: async () => null,
+		readStatusState: () => ({ lastHealAt: null, lastKnownHealth: "unknown" }),
+	};
 
 	const confirmAnswer = options.confirm ?? true;
 	const confirmSpy = vi.fn(async (question: string): Promise<boolean> => {
@@ -148,19 +179,30 @@ export function buildCliHarness(options: CliHarnessOptions = {}): CliHarness {
 		confirm: confirmSpy,
 		colors: createColors({ env: {}, isTty: options.color ?? false }),
 		deps: {
-			probe: async () => classification,
-			readDaemonVersion: async () => daemonVersion,
+			probe: primaryDaemon.probe,
+			statusDaemons: () => daemonSources,
+			readDaemonVersion: primaryDaemon.readDaemonVersion,
 			hivedoctorVersion: "9.9.9-test",
 			ladder,
 			rungContextFor: (c) => ({ classification: c, logger: silentLogger }),
 			decideRung: (n) => ladder.decide(n),
 			readConsecutiveFailures: () => options.consecutiveFailures ?? 0,
-			readStatusState: () => options.statusState ?? { lastHealAt: null, lastKnownHealth: "unknown" },
+			readStatusState: primaryDaemon.readStatusState,
 			serviceState: () => options.serviceState ?? "unknown",
 			...(options.serviceStateAsync !== undefined ? { serviceStateAsync: options.serviceStateAsync } : {}),
 			optOut: options.optOut ?? resolveOptOut({ cliNoAutoUpdate: false, env: {} }),
 			update: { checkPrimaryUpdate, applyPrimaryUpdate, selfUpdate },
-			tailIncidents: async () => options.incidents ?? [],
+			tailIncidents: async (_limit, daemonName) => {
+				if (daemonName !== undefined) return options.incidentsByDaemon?.[daemonName] ?? [];
+				if (options.incidentsByDaemon !== undefined) {
+					const lines: string[] = [];
+					for (const [name, daemonLines] of Object.entries(options.incidentsByDaemon)) {
+						for (const line of daemonLines) lines.push(`[${name}] ${line}`);
+					}
+					return lines;
+				}
+				return options.incidents ?? [];
+			},
 			...(options.serviceModule !== undefined ? { serviceModule: options.serviceModule } : {}),
 		},
 	};

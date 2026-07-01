@@ -56,7 +56,7 @@ export interface UpdateActions {
 }
 
 /** Reads the recent incident-log lines for `logs`. */
-export type TailIncidentsFn = (limit: number) => Promise<readonly string[]>;
+export type TailIncidentsFn = (limit: number, daemonName?: string) => Promise<readonly string[]>;
 
 /** Snapshot of the persisted state the `status` command reports (read defensively). */
 export interface StatusStateSnapshot {
@@ -69,6 +69,14 @@ export interface StatusStateSnapshot {
 /** Reads the durable state snapshot for `status`. */
 export type ReadStatusStateFn = () => StatusStateSnapshot;
 
+/** One daemon-specific status source for `status`. */
+export interface StatusDaemonSource {
+	readonly name: string;
+	readonly probe: () => Promise<HealthClassification>;
+	readonly readDaemonVersion: ReadInstalledVersionFn;
+	readonly readStatusState: ReadStatusStateFn;
+}
+
 /** Coarse HiveDoctor service state for `status` (064b owns the real registration). */
 export type ServiceState = "running" | "not-running" | "unknown";
 
@@ -76,6 +84,8 @@ export type ServiceState = "running" | "not-running" | "unknown";
 export interface CliDeps {
 	/** Probe + classify `/health` (returns a classification even when the daemon is down). */
 	readonly probe: () => Promise<HealthClassification>;
+	/** Registry-aware daemon status sources (`status` prints one block per source). */
+	readonly statusDaemons: () => readonly StatusDaemonSource[];
 	/** Read the daemon's reported version from `/health`, or null when unreachable. */
 	readonly readDaemonVersion: ReadInstalledVersionFn;
 	/** HiveDoctor's own package version (single-sourced via src/version.ts). */

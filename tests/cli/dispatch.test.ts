@@ -75,6 +75,64 @@ describe("dispatch (PRD-064f)", () => {
 			// Opt-out via the CLI flag is reported honestly with its source.
 			expect(text).toContain("disabled (cli)");
 		});
+
+		it("b-AC-4: prints one status block per registered daemon", async () => {
+			const h = buildCliHarness({
+				statusDaemons: [
+					{
+						name: "honeycomb",
+						classification: { kind: "ok" },
+						daemonVersion: "1.0.0",
+						statusState: { lastHealAt: "2026-07-01T00:00:00.000Z", lastKnownHealth: "ok" },
+					},
+					{
+						name: "thehive",
+						classification: { kind: "degraded", reasons: { storage: "slow" } },
+						daemonVersion: "2.0.0",
+						statusState: { lastHealAt: null, lastKnownHealth: "degraded" },
+					},
+					{
+						name: "hivenectar",
+						classification: { kind: "ok" },
+						daemonVersion: "3.0.0",
+						statusState: { lastHealAt: "2026-07-01T00:05:00.000Z", lastKnownHealth: "ok" },
+					},
+				],
+			});
+			const code = await dispatch(["status"], h.ctx);
+			expect(code).toBe(EXIT_OK);
+			const text = h.out.text();
+			expect(text).toContain("Daemon: honeycomb");
+			expect(text).toContain("Daemon: thehive");
+			expect(text).toContain("Daemon: hivenectar");
+			expect(text).toContain("Auto-update:");
+		});
+
+		it("b-AC-5: an unreachable daemon does not abort other daemon blocks", async () => {
+			const h = buildCliHarness({
+				statusDaemons: [
+					{
+						name: "honeycomb",
+						classification: { kind: "ok" },
+						daemonVersion: "1.0.0",
+						statusState: { lastHealAt: "2026-07-01T00:00:00.000Z", lastKnownHealth: "ok" },
+					},
+					{
+						name: "thehive",
+						classification: { kind: "unreachable-timeout" },
+						daemonVersion: null,
+						statusState: { lastHealAt: null, lastKnownHealth: "unreachable" },
+					},
+				],
+			});
+			const code = await dispatch(["status"], h.ctx);
+			expect(code).toBe(EXIT_OK);
+			const text = h.out.text();
+			expect(text).toContain("Daemon: honeycomb");
+			expect(text).toContain("Daemon: thehive");
+			expect(text).toContain("unreachable (timed out / wedged)");
+			expect(text).toContain("unknown (daemon unreachable)");
+		});
 	});
 
 	describe("AC-064f.3: diagnose recommends a rung and takes NO action", () => {
@@ -254,6 +312,34 @@ describe("dispatch (PRD-064f)", () => {
 			const empty = buildCliHarness({ incidents: [] });
 			await dispatch(["logs"], empty.ctx);
 			expect(empty.out.text()).toContain("No incidents recorded yet.");
+		});
+
+		it("b-AC-6: logs --daemon filters to one daemon stream", async () => {
+			const h = buildCliHarness({
+				incidentsByDaemon: {
+					honeycomb: ['{"id":"h1"}'],
+					thehive: ['{"id":"t1"}'],
+				},
+			});
+			const code = await dispatch(["logs", "--daemon", "thehive"], h.ctx);
+			expect(code).toBe(EXIT_OK);
+			const text = h.out.text();
+			expect(text).toContain('{"id":"t1"}');
+			expect(text).not.toContain('{"id":"h1"}');
+		});
+
+		it("b-AC-7: logs without --daemon interleaves all streams with daemon prefixes", async () => {
+			const h = buildCliHarness({
+				incidentsByDaemon: {
+					honeycomb: ['{"id":"h1"}'],
+					thehive: ['{"id":"t1"}'],
+				},
+			});
+			const code = await dispatch(["logs"], h.ctx);
+			expect(code).toBe(EXIT_OK);
+			const text = h.out.text();
+			expect(text).toContain('[honeycomb] {"id":"h1"}');
+			expect(text).toContain('[thehive] {"id":"t1"}');
 		});
 	});
 });

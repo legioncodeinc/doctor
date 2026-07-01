@@ -59,10 +59,16 @@ export const DEFAULT_STATE: HiveDoctorState = {
 
 /** Options for {@link createStateStore}. */
 export interface StateStoreOptions {
-	/** HiveDoctor's workspace dir; `state.json` is read/written under it. */
+	/** HiveDoctor's workspace dir; the state file is read/written under it. */
 	readonly workspaceDir: string;
 	/** Logger for defensive reporting of a failed write (never thrown). */
 	readonly logger: Logger;
+	/**
+	 * Optional per-daemon shard name (PRD-004a a-AC-5). When set, state is written to
+	 * `state-<name>.json` instead of the shared `state.json`, so one daemon's remediation
+	 * state never cross-contaminates another's. Omitted for the legacy single-daemon store.
+	 */
+	readonly name?: string;
 }
 
 /** The state store: defensive read + defensive atomic write. */
@@ -113,15 +119,21 @@ export function mergeState(parsed: unknown): HiveDoctorState {
 	};
 }
 
+/** The state filename for a store: `state-<name>.json` per-daemon (PRD-004a), else `state.json`. */
+function stateFileName(name: string | undefined): string {
+	return name !== undefined && name !== "" ? `state-${name}.json` : "state.json";
+}
+
 /** Build a state store bound to a workspace dir. */
 export function createStateStore(options: StateStoreOptions): StateStore {
+	const fileName = stateFileName(options.name);
 	return {
 		read(): HiveDoctorState {
 			try {
-				// Containment: the fixed "state.json" name is joined under the variable workspace
+				// Containment: the fixed state-file name is joined under the variable workspace
 				// dir and asserted to stay inside it (defense-in-depth + SAST taint visibility). A
 				// containment violation throws and is caught here, degrading exactly like a read error.
-				const filePath = resolveInBase(options.workspaceDir, "state.json");
+				const filePath = resolveInBase(options.workspaceDir, fileName);
 				const raw = readFileSync(filePath, "utf8");
 				return mergeState(JSON.parse(raw));
 			} catch {
@@ -134,10 +146,10 @@ export function createStateStore(options: StateStoreOptions): StateStore {
 		write(state: HiveDoctorState): void {
 			let tmpPath: string | null = null;
 			try {
-				// Containment: the fixed "state.json" name is joined under the variable workspace
+				// Containment: the fixed state-file name is joined under the variable workspace
 				// dir and asserted to stay inside it (defense-in-depth + SAST taint visibility). A
 				// containment violation throws and is caught below, degrading like a write failure.
-				const filePath = resolveInBase(options.workspaceDir, "state.json");
+				const filePath = resolveInBase(options.workspaceDir, fileName);
 				// Atomic write: serialize to a uniquely-named temp file in the same dir, then rename
 				// over the target. A crash mid-write thus never leaves a half-written state.json.
 				tmpPath = `${filePath}.${randomBytes(6).toString("hex")}.tmp`;
