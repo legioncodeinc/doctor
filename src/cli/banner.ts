@@ -31,7 +31,7 @@ const ART = String.raw`
 `;
 
 /** Product identity line shown beneath the collaboration banner. */
-const NAME = "HiveDoctor";
+const NAME = "Doctor";
 
 /** Build the full banner: collaboration banner + product name + version. Pure; colorized via `colors`. */
 export function renderBanner(colors: Colors): string {
