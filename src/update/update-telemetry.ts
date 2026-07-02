@@ -17,8 +17,17 @@
  *
  * Fail-soft: the default seam delegates to `emitTelemetry`, which never throws and never
  * rejects. The engine awaits the emit but a failed send is a swallowed no-op.
+ *
+ * ADDITIVE (lifecycle capture events): when the composition root supplies a
+ * {@link LifecycleTelemetry} emitter, a SUCCESSFUL update outcome ("updated" /
+ * "updated_unverified") ALSO fires the `hivedoctor_updated` PostHog CAPTURE event
+ * ({@link file://../telemetry/capture.ts}), deduped per to_version via the state store.
+ * The OTLP log emission above is untouched; the capture emit is a second, equally
+ * fail-soft leg that can never affect the engine. No lifecycle injected = no capture
+ * leg (so bare test/dev constructions never read env, disk, or network implicitly).
  */
 
+import type { LifecycleTelemetry } from "../telemetry/capture.js";
 import { emitTelemetry, type EmitDeps } from "../telemetry/emit.js";
 
 /** The outcome of an update or rollback transaction (the `outcome` of AC-064e.5). */
@@ -55,8 +64,13 @@ export type UpdateEmit = (event: UpdateTelemetryEvent) => Promise<void>;
  * telemetry chokepoint. The from/to/outcome triple is packed into the allow-listed
  * `error_class` (a stable label) + `error_detail` (the compact fact string). Fail-soft:
  * `emitTelemetry` swallows all transport errors and never throws.
+ *
+ * Additive lifecycle leg: when `lifecycle` is supplied, a SUCCESSFUL update outcome
+ * ("updated" / "updated_unverified") also fires the `hivedoctor_updated` capture event
+ * (deduped per to_version inside the lifecycle emitter). Rollbacks and failures fire NO
+ * capture event. Absent `lifecycle` = the pre-existing OTLP-log-only behavior.
  */
-export function createDefaultUpdateEmit(deps: EmitDeps = {}): UpdateEmit {
+export function createDefaultUpdateEmit(deps: EmitDeps = {}, lifecycle?: LifecycleTelemetry): UpdateEmit {
 	return async (event: UpdateTelemetryEvent): Promise<void> => {
 		await emitTelemetry(
 			{
@@ -68,5 +82,20 @@ export function createDefaultUpdateEmit(deps: EmitDeps = {}): UpdateEmit {
 			},
 			deps,
 		);
+
+		// The additive capture leg: only a landed update reports (kind "update" + a kept
+		// new version). The lifecycle emitter is itself gated + deduped + fail-soft, and
+		// the extra try/catch keeps this seam total even against a broken injected stub.
+		if (
+			lifecycle !== undefined &&
+			event.kind === "update" &&
+			(event.outcome === "updated" || event.outcome === "updated_unverified")
+		) {
+			try {
+				await lifecycle.updated(event.fromVersion, event.toVersion, event.outcome);
+			} catch {
+				// A capture-event failure must never surface into the update transaction.
+			}
+		}
 	};
 }

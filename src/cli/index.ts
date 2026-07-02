@@ -34,6 +34,7 @@ import {
 } from "../remediation.js";
 import { createServiceModule, serviceStatus } from "../service/index.js";
 import { createStateStore } from "../state.js";
+import { createLifecycleTelemetry } from "../telemetry/capture.js";
 import {
 	createInstalledPackageVersionReader,
 	createRegistryLatestReader,
@@ -178,6 +179,15 @@ export function buildCliContext(argv: readonly string[]): CliContext {
 
 	const optOut = resolveOptOut({ cliNoAutoUpdate: hasFlag(parseArgs(argv), "no-auto-update"), env });
 
+	// The lifecycle capture-event emitter (hivedoctor_installed / _updated / _uninstalled):
+	// dedupe markers live in hivedoctor's own un-sharded state.json; distinct_id prefers the
+	// shared installer id (~/.honeycomb/install-id) with the resolved device id as fallback.
+	// Every method is gated (empty key / DO_NOT_TRACK / HONEYCOMB_TELEMETRY=0) + fail-soft.
+	const lifecycle = createLifecycleTelemetry({
+		stateStore: createStateStore({ workspaceDir: config.workspaceDir, logger }),
+		distinctId: { deviceId },
+	});
+
 	const updateEngine = createUpdateEngine({
 		runner,
 		installLock,
@@ -196,6 +206,7 @@ export function buildCliContext(argv: readonly string[]): CliContext {
 			...(optOut.pinnedVersion !== undefined ? { pinnedVersion: optOut.pinnedVersion } : {}),
 		},
 		deviceId,
+		lifecycle,
 		logger,
 	});
 
@@ -238,6 +249,7 @@ export function buildCliContext(argv: readonly string[]): CliContext {
 			// "unknown" on a spawn error or unsupported platform, so `status` stays fast and fail-safe.
 			serviceStateAsync: () => serviceStatus({ execPath: serviceExecPath, preferSystemScope, runner }),
 			serviceModule,
+			lifecycle,
 			optOut,
 			// `update --check` previews via previewUpdate() (READ-ONLY, never mutates); `update`
 			// applies via runUpdateTransaction(); `self-update` is the sole own-package path.

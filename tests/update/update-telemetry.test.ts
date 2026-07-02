@@ -6,6 +6,7 @@
 
 import { describe, expect, it } from "vitest";
 
+import type { LifecycleTelemetry } from "../../src/telemetry/capture.js";
 import type { TelemetryFetchInit, TelemetryFetchResponse } from "../../src/telemetry/emit.js";
 import { createDefaultUpdateEmit } from "../../src/update/update-telemetry.js";
 
@@ -70,5 +71,130 @@ describe("createDefaultUpdateEmit (AC-064e.5)", () => {
 		).resolves.toBeUndefined();
 		// Nothing left the box.
 		expect(rec.bodies).toHaveLength(0);
+	});
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// The ADDITIVE hivedoctor_updated capture leg (lifecycle telemetry)
+// ────────────────────────────────────────────────────────────────────────────
+
+/** A lifecycle recorder stub capturing every updated() call. */
+function lifecycleRecorder(options: { throwOnUpdated?: boolean } = {}): {
+	lifecycle: LifecycleTelemetry;
+	updatedCalls: Array<{ from: string; to: string; outcome: string }>;
+} {
+	const updatedCalls: Array<{ from: string; to: string; outcome: string }> = [];
+	return {
+		updatedCalls,
+		lifecycle: {
+			async installed() {
+				return { sent: true };
+			},
+			async updated(from, to, outcome) {
+				if (options.throwOnUpdated === true) throw new Error("broken lifecycle stub");
+				updatedCalls.push({ from, to, outcome });
+				return { sent: true };
+			},
+			async uninstalled() {
+				return { sent: true };
+			},
+		},
+	};
+}
+
+describe("createDefaultUpdateEmit: additive hivedoctor_updated capture leg", () => {
+	const emitDeps = { posthogKey: "test-key", posthogHost: "https://telemetry.test", env: {} };
+
+	it("fires lifecycle.updated on a successful 'updated' outcome AND keeps the OTLP log", async () => {
+		const rec = recordingFetch();
+		const lc = lifecycleRecorder();
+		const emit = createDefaultUpdateEmit({ ...emitDeps, fetch: rec.fetch }, lc.lifecycle);
+
+		await emit({
+			kind: "update",
+			fromVersion: "0.1.7",
+			toVersion: "0.1.9",
+			outcome: "updated",
+			deviceId: "device-abc",
+			timestampMs: 1,
+		});
+
+		// The pre-existing OTLP log leg is untouched (still exactly one log POST).
+		expect(rec.bodies).toHaveLength(1);
+		expect(rec.bodies[0] ?? "").toContain("from=0.1.7;to=0.1.9;outcome=updated");
+		// The additive capture leg fired with the from/to/outcome triple.
+		expect(lc.updatedCalls).toEqual([{ from: "0.1.7", to: "0.1.9", outcome: "updated" }]);
+	});
+
+	it("fires lifecycle.updated on 'updated_unverified' too", async () => {
+		const rec = recordingFetch();
+		const lc = lifecycleRecorder();
+		const emit = createDefaultUpdateEmit({ ...emitDeps, fetch: rec.fetch }, lc.lifecycle);
+
+		await emit({
+			kind: "update",
+			fromVersion: "0.1.7",
+			toVersion: "0.1.9",
+			outcome: "updated_unverified",
+			deviceId: "device-abc",
+			timestampMs: 1,
+		});
+
+		expect(lc.updatedCalls).toEqual([{ from: "0.1.7", to: "0.1.9", outcome: "updated_unverified" }]);
+	});
+
+	it("does NOT fire on a failed install", async () => {
+		const rec = recordingFetch();
+		const lc = lifecycleRecorder();
+		const emit = createDefaultUpdateEmit({ ...emitDeps, fetch: rec.fetch }, lc.lifecycle);
+
+		await emit({
+			kind: "update",
+			fromVersion: "0.1.7",
+			toVersion: "0.1.9",
+			outcome: "install_failed",
+			deviceId: "device-abc",
+			timestampMs: 1,
+		});
+
+		expect(lc.updatedCalls).toHaveLength(0);
+		// The OTLP log leg still records the failure fact.
+		expect(rec.bodies).toHaveLength(1);
+	});
+
+	it("does NOT fire on a rollback event", async () => {
+		const rec = recordingFetch();
+		const lc = lifecycleRecorder();
+		const emit = createDefaultUpdateEmit({ ...emitDeps, fetch: rec.fetch }, lc.lifecycle);
+
+		await emit({
+			kind: "rollback",
+			fromVersion: "0.1.9",
+			toVersion: "0.1.7",
+			outcome: "rolled_back",
+			deviceId: "device-abc",
+			timestampMs: 1,
+		});
+
+		expect(lc.updatedCalls).toHaveLength(0);
+	});
+
+	it("a THROWING lifecycle stub never rejects the emit seam", async () => {
+		const rec = recordingFetch();
+		const lc = lifecycleRecorder({ throwOnUpdated: true });
+		const emit = createDefaultUpdateEmit({ ...emitDeps, fetch: rec.fetch }, lc.lifecycle);
+
+		await expect(
+			emit({
+				kind: "update",
+				fromVersion: "0.1.7",
+				toVersion: "0.1.9",
+				outcome: "updated",
+				deviceId: "device-abc",
+				timestampMs: 1,
+			}),
+		).resolves.toBeUndefined();
+		// The OTLP log still went out despite the broken capture leg.
+		expect(rec.bodies).toHaveLength(1);
 	});
 });

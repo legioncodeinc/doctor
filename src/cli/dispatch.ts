@@ -216,6 +216,12 @@ async function runSelfUpdate(ctx: CliContext): Promise<number> {
  * `install-service` / `uninstall-service`: delegate to 064b if wired, else print stub. The module
  * returns a structured {@link ServiceResult}; a manager-command failure (ok:false) maps to
  * {@link EXIT_ERROR} so callers (the installers) see an honest non-zero exit (IRD-192 AC-6).
+ *
+ * Lifecycle capture events (additive, both legs gated + fail-soft inside the emitter):
+ *   - `hivedoctor_uninstalled` fires BEFORE the uninstall's state teardown, fire-and-forget
+ *     (never awaited, so it can never block or fail the uninstall).
+ *   - `hivedoctor_installed` fires AFTER the install verb completes successfully; awaited
+ *     (bounded 2s, never throws) so the once-per-machine dedupe marker persists before exit.
  */
 async function runService(ctx: CliContext, kind: "install" | "uninstall"): Promise<number> {
 	const { io, deps } = ctx;
@@ -223,8 +229,17 @@ async function runService(ctx: CliContext, kind: "install" | "uninstall"): Promi
 		io.out(SERVICE_NOT_AVAILABLE);
 		return EXIT_OK;
 	}
+	if (kind === "uninstall" && deps.lifecycle !== undefined) {
+		// Fire-and-forget BEFORE teardown: the emitter never throws/rejects, and the POST
+		// (bounded 2s) races the manager commands below rather than delaying them.
+		void deps.lifecycle.uninstalled();
+	}
 	const result = kind === "install" ? await deps.serviceModule.install() : await deps.serviceModule.uninstall();
 	io.out(result.message);
+	if (kind === "install" && result.ok && deps.lifecycle !== undefined) {
+		// Once per machine: the emitter checks + persists the state-store marker itself.
+		await deps.lifecycle.installed();
+	}
 	return result.ok ? EXIT_OK : EXIT_ERROR;
 }
 
