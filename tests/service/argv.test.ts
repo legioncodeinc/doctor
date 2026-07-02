@@ -51,7 +51,7 @@ describe("systemd argv (Linux)", () => {
 	const userPlan = resolveServicePlan(fixedEnv({ platform: "linux" }));
 	const sysPlan = resolveServicePlan(fixedEnv({ platform: "linux", privileged: true, preferSystemScope: true }));
 
-	it("user install: systemctl --user enable --now hivedoctor.service", () => {
+	it("user install: systemctl --user enable --now doctor.service", () => {
 		expect(installCommands(userPlan, UID)[0]).toEqual({
 			command: "systemctl",
 			args: ["--user", "enable", "--now", SYSTEMD_UNIT_NAME],

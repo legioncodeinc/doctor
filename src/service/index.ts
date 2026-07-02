@@ -27,8 +27,15 @@ import { createExecFileRunner, type CommandResult, type CommandRunner } from "..
 import type { Logger } from "../logger.js";
 import { silentLogger } from "../logger.js";
 import type { ServiceModule, ServiceResult } from "../cli/service-stub.js";
-import { installCommands, statusCommand, uninstallCommands, type ServiceCommand } from "./argv.js";
 import {
+	installCommands,
+	legacyUninstallCommands,
+	statusCommand,
+	uninstallCommands,
+	type ServiceCommand,
+} from "./argv.js";
+import {
+	legacyUnitPath,
 	resolveServiceContext,
 	resolveServicePlan,
 	type ServiceEnvironment,
@@ -181,6 +188,19 @@ export function createServiceModule(deps: ServiceModuleDeps): ServiceModule {
 					ok: false,
 					message: `Could not register HiveDoctor service: ${error instanceof Error ? error.message : "unknown error"}.`,
 				};
+			}
+
+			// 0) Migrate away from the pre-decision-#32 unit names: best-effort deregister the
+			//    legacy unit (`com.legioncode.hivedoctor` / `hivedoctor.service` / `HiveDoctor`)
+			//    and remove its unit file, so a re-run never leaves two units racing over one
+			//    daemon. Expected to fail harmlessly when no legacy unit exists; never blocks
+			//    the install.
+			await runAll(runner, legacyUninstallCommands(p, uid));
+			try {
+				const legacyPath = legacyUnitPath(p);
+				if (legacyPath !== "") fs.removeFile(legacyPath);
+			} catch {
+				// Best-effort migration cleanup only; a remove failure never blocks the install.
 			}
 
 			// 1) Write the unit file FIRST (when this manager is file-based). schtasks consumes the

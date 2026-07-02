@@ -25,13 +25,19 @@ describe("install - writes the unit file then runs the manager argv", () => {
 		const result = await module.install();
 
 		// The unit file was written under ~/.config/systemd/user.
-		const unitPath = "/home/t/.config/systemd/user/hivedoctor.service";
+		const unitPath = "/home/t/.config/systemd/user/doctor.service";
 		expect(fs.files.has(unitPath)).toBe(true);
 		expect(fs.files.get(unitPath)).toContain("Restart=always");
-		// Then systemctl --user enable --now ran.
+		// Decision #32 migration: the legacy unit is deregistered first...
 		expect(runner.calls[0]).toEqual({
 			command: "systemctl",
-			args: ["--user", "enable", "--now", "hivedoctor.service"],
+			args: ["--user", "disable", "--now", "hivedoctor.service"],
+		});
+		expect(fs.removed).toContain("/home/t/.config/systemd/user/hivedoctor.service");
+		// ...then systemctl --user enable --now ran.
+		expect(runner.calls[1]).toEqual({
+			command: "systemctl",
+			args: ["--user", "enable", "--now", "doctor.service"],
 		});
 		// A successful install resolves ok:true (the CLI maps this to a zero exit, IRD-192 AC-6).
 		expect(result.ok).toBe(true);
@@ -52,8 +58,11 @@ describe("install - writes the unit file then runs the manager argv", () => {
 
 		const plistPath = `/Users/t/Library/LaunchAgents/${SERVICE_LABEL}.plist`;
 		expect(fs.files.get(plistPath)).toContain("<key>KeepAlive</key>");
+		// Decision #32 migration: the legacy label is booted out first, then bootstrap runs.
 		expect(runner.calls[0]?.command).toBe("launchctl");
-		expect(runner.calls[0]?.args[0]).toBe("bootstrap");
+		expect(runner.calls[0]?.args[0]).toBe("bootout");
+		expect(runner.calls[0]?.args[1]).toContain("com.legioncode.hivedoctor");
+		expect(runner.calls[1]?.args[0]).toBe("bootstrap");
 		expect(result.ok).toBe(true);
 	});
 
@@ -73,9 +82,14 @@ describe("install - writes the unit file then runs the manager argv", () => {
 		// IRD-192 AC-2: the staged XML carries the Task-Scheduler-valid PT1M interval.
 		expect(fs.files.get(staged)).toContain("<Interval>PT1M</Interval>");
 		expect(fs.files.get(staged)).toContain("<Task ");
+		// Decision #32 migration: the legacy task name is deleted first, then /Create runs.
 		expect(runner.calls[0]).toEqual({
 			command: "schtasks",
-			args: ["/Create", "/XML", staged, "/TN", "HiveDoctor", "/F"],
+			args: ["/Delete", "/TN", "HiveDoctor", "/F"],
+		});
+		expect(runner.calls[1]).toEqual({
+			command: "schtasks",
+			args: ["/Create", "/XML", staged, "/TN", "doctor", "/F"],
 		});
 		expect(result.ok).toBe(true);
 	});
@@ -94,8 +108,10 @@ describe("install - writes the unit file then runs the manager argv", () => {
 		// A unit-write failure is ok:false (a non-successful install), still never a throw.
 		expect(result.ok).toBe(false);
 		expect(result.message).toContain("Could not write the HiveDoctor unit file");
-		// The manager argv was NOT run (we never got past the write).
-		expect(runner.calls).toHaveLength(0);
+		// The manager's INSTALL argv was not run (we never got past the write); only the
+		// best-effort decision-#32 legacy dereg preceded it.
+		expect(runner.calls).toHaveLength(1);
+		expect(runner.calls[0]?.args).toEqual(["--user", "disable", "--now", "hivedoctor.service"]);
 	});
 
 	it("a manager-command failure is reported but does not throw", async () => {
@@ -182,7 +198,7 @@ describe("uninstall - deregisters then removes the unit file (AC-064b.5)", () =>
 	it("Linux: disables the unit, then deletes the unit file so it cannot resurrect", async () => {
 		const runner = createRecordingRunner();
 		const fs = createMemoryFs();
-		const unitPath = "/home/t/.config/systemd/user/hivedoctor.service";
+		const unitPath = "/home/t/.config/systemd/user/doctor.service";
 		fs.files.set(unitPath, "stale unit");
 		const module = createServiceModule({
 			execPath: "/usr/bin/hivedoctor",
@@ -195,7 +211,7 @@ describe("uninstall - deregisters then removes the unit file (AC-064b.5)", () =>
 
 		expect(runner.calls[0]).toEqual({
 			command: "systemctl",
-			args: ["--user", "disable", "--now", "hivedoctor.service"],
+			args: ["--user", "disable", "--now", "doctor.service"],
 		});
 		expect(fs.removed).toContain(unitPath);
 		expect(fs.files.has(unitPath)).toBe(false);
@@ -215,7 +231,7 @@ describe("uninstall - deregisters then removes the unit file (AC-064b.5)", () =>
 
 		await module.uninstall();
 
-		expect(runner.calls[0]).toEqual({ command: "schtasks", args: ["/Delete", "/TN", "HiveDoctor", "/F"] });
+		expect(runner.calls[0]).toEqual({ command: "schtasks", args: ["/Delete", "/TN", "doctor", "/F"] });
 		expect(fs.removed).toContain("C:\\Users\\t/.honeycomb/hivedoctor/hivedoctor-task.xml");
 	});
 

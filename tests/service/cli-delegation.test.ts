@@ -31,7 +31,7 @@ describe("install-service / uninstall-service delegate to the real 064b module",
 
 		expect(code).toBe(EXIT_OK);
 		// The REAL module ran: it wrote the systemd unit and the result line is its honest output.
-		expect(fs.files.has("/home/t/.config/systemd/user/hivedoctor.service")).toBe(true);
+		expect(fs.files.has("/home/t/.config/systemd/user/doctor.service")).toBe(true);
 		expect(runner.calls[0]?.command).toBe("systemctl");
 		expect(h.out.text()).toContain("HiveDoctor registered as a systemd service");
 		// And NOT the "not yet available" stub message.
@@ -41,7 +41,7 @@ describe("install-service / uninstall-service delegate to the real 064b module",
 	it("uninstall-service runs the real module's uninstall path", async () => {
 		const runner = createRecordingRunner();
 		const fs = createMemoryFs();
-		fs.files.set("/home/t/.config/systemd/user/hivedoctor.service", "unit");
+		fs.files.set("/home/t/.config/systemd/user/doctor.service", "unit");
 		const serviceModule = createServiceModule({
 			execPath: "/usr/bin/hivedoctor",
 			runner,
@@ -54,7 +54,7 @@ describe("install-service / uninstall-service delegate to the real 064b module",
 
 		expect(code).toBe(EXIT_OK);
 		expect(runner.calls[0]?.args).toContain("disable");
-		expect(fs.removed).toContain("/home/t/.config/systemd/user/hivedoctor.service");
+		expect(fs.removed).toContain("/home/t/.config/systemd/user/doctor.service");
 		expect(h.out.text()).toContain("unregistered");
 	});
 

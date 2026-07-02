@@ -33,14 +33,28 @@ export type ServiceManager = "launchd" | "systemd" | "schtasks" | "sc";
 /** The privilege scope a unit is installed at. */
 export type ServiceScope = "user" | "system";
 
-/** The stable label/name the unit is registered under across every platform. */
-export const SERVICE_LABEL = "com.legioncode.hivedoctor" as const;
+/**
+ * The stable label/name the unit is registered under across every platform.
+ * Decision #32 (2026-07-02, nectar `library/requirements/PRD-DECISIONS-AND-DEFAULTS.md`):
+ * the fleet-wide scheme is reverse-DNS `com.legioncode.<shortname>` with the
+ * product short name `doctor`, superseding `com.legioncode.hivedoctor`.
+ */
+export const SERVICE_LABEL = "com.legioncode.doctor" as const;
 
-/** The systemd unit file name (the `--user` unit lives under ~/.config/systemd/user). */
-export const SYSTEMD_UNIT_NAME = "hivedoctor.service" as const;
+/** The systemd unit file name (decision #32: `<shortname>.service`). */
+export const SYSTEMD_UNIT_NAME = "doctor.service" as const;
 
-/** The Windows Scheduled Task / Service name (a friendly, space-free task path). */
-export const WINDOWS_TASK_NAME = "HiveDoctor" as const;
+/** The Windows Scheduled Task / Service name (decision #32: the bare short name). */
+export const WINDOWS_TASK_NAME = "doctor" as const;
+
+/** The pre-decision-#32 launchd label, deregistered on install (migration path). */
+export const LEGACY_SERVICE_LABEL = "com.legioncode.hivedoctor" as const;
+
+/** The pre-decision-#32 systemd unit name, deregistered on install. */
+export const LEGACY_SYSTEMD_UNIT_NAME = "hivedoctor.service" as const;
+
+/** The pre-decision-#32 Windows task name, deregistered on install. */
+export const LEGACY_WINDOWS_TASK_NAME = "HiveDoctor" as const;
 
 /** The raw facts the resolver consumes (injected so the resolver is hermetic). */
 export interface ServiceEnvironment {
@@ -138,6 +152,27 @@ function systemUnitPath(platform: ServicePlatform): string {
 			return `/etc/systemd/system/${SYSTEMD_UNIT_NAME}`;
 		case "win32":
 			// Windows Service is registered via sc.exe (no unit file we own on disk).
+			return "";
+	}
+}
+
+/**
+ * The on-disk unit path the PRE-decision-#32 install would have used for this
+ * plan's platform + scope. Install removes it (best-effort) so a re-run migrates
+ * a legacy unit instead of leaving two units racing over one daemon. Empty when
+ * the platform keeps no unit file (Windows).
+ */
+export function legacyUnitPath(plan: ServicePlan): string {
+	switch (plan.platform) {
+		case "darwin":
+			return plan.scope === "system"
+				? `/Library/LaunchDaemons/${LEGACY_SERVICE_LABEL}.plist`
+				: `${plan.home}/Library/LaunchAgents/${LEGACY_SERVICE_LABEL}.plist`;
+		case "linux":
+			return plan.scope === "system"
+				? `/etc/systemd/system/${LEGACY_SYSTEMD_UNIT_NAME}`
+				: `${plan.home}/.config/systemd/user/${LEGACY_SYSTEMD_UNIT_NAME}`;
+		case "win32":
 			return "";
 	}
 }

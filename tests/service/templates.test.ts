@@ -92,7 +92,7 @@ describe("renderScheduledTaskXml (Windows)", () => {
 	const xml = renderScheduledTaskXml(plan);
 
 	it("declares the HiveDoctor task URI", () => {
-		expect(xml).toContain("<URI>\\HiveDoctor</URI>");
+		expect(xml).toContain("<URI>\\doctor</URI>");
 	});
 
 	it("starts at logon (start-on-boot equivalent, no admin)", () => {
