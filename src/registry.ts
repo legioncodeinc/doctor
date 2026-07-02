@@ -1,9 +1,16 @@
 /**
- * HiveDoctor supervised-daemon registry (PRD-004a).
+ * HiveDoctor supervised-daemon registry (PRD-004a; extended by hivedoctor PRD-001a).
  *
  * hivedoctor no longer supervises a single hard-coded daemon: it reads a static JSON
  * registry file on boot and spawns one supervisor per listed daemon. This module owns
  * the registry file's schema and its DEFENSIVE parse.
+ *
+ * PRD-001a adds ONE new OPTIONAL field, {@link DaemonEntry.telemetryDbPath}: the path to
+ * the service's own runtime telemetry SQLite database (ADR-0002 decision 1). This is
+ * purely additive -- every PRD-004a field, `coerceName`/`coerceHealthUrl`/`coercePidPath`,
+ * and the interval coercions are UNCHANGED. An entry with no `telemetryDbPath` is
+ * health-probe-only (a-AC-2): the poll loop (`ingestion/poll-loop.ts`) skips SQLite
+ * ingestion for it, preserving every existing PRD-004a behavior exactly.
  *
  * The registry file is an EXTERNAL input, so it is validated at this boundary. It is
  * hand-validated with node built-ins ONLY, mirroring the defensive-parse posture of
@@ -30,9 +37,10 @@
 
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 
 import { DEFAULTS } from "./config.js";
+import { assertWithinBase } from "./safe-path.js";
 
 /** The three known workload daemons hivedoctor supervises. Names are parsed permissively (any filename-safe token) and narrowed against this list where useful. */
 export const KNOWN_DAEMON_NAMES = ["honeycomb", "thehive", "hivenectar"] as const;
@@ -60,6 +68,14 @@ export interface DaemonEntry {
 	readonly restartGiveUpThreshold: number;
 	/** Cooldown after a restart hivedoctor performed for this daemon, in ms. */
 	readonly restartCooldownMs: number;
+	/**
+	 * Optional path to this service's runtime telemetry SQLite database (leading `~`
+	 * already expanded and the value resolved to a validated ABSOLUTE path; a relative
+	 * path is rejected at parse time). Absent means health-probe-only: no SQLite
+	 * ingestion for this entry (PRD-001a a-AC-2). hivedoctor only ever opens this database
+	 * READ-ONLY (ADR-0001 decision 4, PRD-001b b-AC-3); it never creates or writes it.
+	 */
+	readonly telemetryDbPath?: string;
 }
 
 /** Options for {@link loadRegistry}. */
@@ -165,6 +181,46 @@ function coercePidPath(value: unknown, home: string, fallback: string): string {
 }
 
 /**
+ * Coerce the OPTIONAL `telemetryDbPath` field (PRD-001a): a non-empty string with `~`
+ * expanded, or `undefined` when absent/garbage. Unlike the other fields there is no
+ * built-in default to fall back to -- an absent or invalid value means "no SQLite
+ * telemetry for this service; probe `/health` only" (a-AC-2), which is a valid, common
+ * state (every legacy PRD-004a entry has no such field) rather than an error.
+ *
+ * SECURITY (arbitrary-file-read via a poisoned registry, security-review finding): a
+ * registry entry with an unconstrained `telemetryDbPath` would let hivedoctor open ANY
+ * user-readable SQLite file and, if it happens to carry Contract-B-shaped tables, poll
+ * and forward its contents over the unauthenticated loopback SSE stream (`/events`).
+ * Contract A pins telemetry databases under `~/.honeycomb/telemetry/`; this coercion
+ * enforces that containment with {@link assertWithinBase} (the same defense-in-depth
+ * helper `pidPath`'s composed paths already route through elsewhere in this codebase).
+ * A path that escapes the trusted root degrades to `undefined` (health-probe-only),
+ * mirroring `coerceHealthUrl`'s fallback-on-invalid-input posture -- never a crash, never
+ * a silently-honored escape.
+ */
+function coerceTelemetryDbPath(value: unknown, home: string): string | undefined {
+	if (typeof value !== "string" || value.trim() === "") return undefined;
+	const expanded = expandTilde(value.trim(), home);
+	// A RELATIVE post-`~` path is rejected outright: it would anchor against whatever
+	// process.cwd() happens to be, so a containment check at parse time could pass under
+	// one cwd while the poll loop later reopens a DIFFERENT file under another. Only an
+	// absolute path has one stable meaning to validate and later open.
+	if (!isAbsolute(expanded)) return undefined;
+	const trustedRoot = join(home, ".honeycomb", "telemetry");
+	try {
+		// Validate the EXACT value returned (the path the poll loop later opens): resolve
+		// normalizes and, on Windows, pins the drive letter of a drive-letter-less absolute
+		// path, and `assertWithinBase` returns the very candidate it checked, so no
+		// differently-anchored reinterpretation can happen downstream.
+		return assertWithinBase(trustedRoot, resolve(expanded));
+	} catch {
+		// Escapes the trusted telemetry root: treat exactly like an absent field rather
+		// than honoring an out-of-bounds path.
+		return undefined;
+	}
+}
+
+/**
  * Coerce and validate a required entry `name`. A registry entry with no filename-safe
  * name cannot key a per-daemon shard, so a missing/garbage name is a MALFORMED registry
  * (fail loud), not a defaulted optional field.
@@ -185,6 +241,7 @@ function parseEntry(raw: unknown, index: number, home: string): DaemonEntry {
 	}
 	const o = raw as Record<string, unknown>;
 	const defaultPidPath = join(home, ".honeycomb", "daemon.pid");
+	const telemetryDbPath = coerceTelemetryDbPath(o.telemetryDbPath, home);
 	return {
 		name: coerceName(o.name, index),
 		healthUrl: coerceHealthUrl(o.healthUrl, DEFAULTS.healthUrl),
@@ -193,6 +250,7 @@ function parseEntry(raw: unknown, index: number, home: string): DaemonEntry {
 		startupGraceMs: coercePositiveInt(o.startupGraceMs, DEFAULTS.startupGraceMs),
 		restartGiveUpThreshold: coercePositiveInt(o.restartGiveUpThreshold, DEFAULTS.restartGiveUpThreshold),
 		restartCooldownMs: coerceNonNegativeInt(o.restartCooldownMs, DEFAULTS.restartCooldownMs),
+		...(telemetryDbPath !== undefined ? { telemetryDbPath } : {}),
 	};
 }
 

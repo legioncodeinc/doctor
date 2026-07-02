@@ -33,6 +33,9 @@ import { resolveConfig, type HiveDoctorConfig } from "../config.js";
 import { resolveDeviceId } from "../device-id.js";
 import { defaultRegistryPath, readRegistryFile, RegistryError, type DaemonEntry } from "../registry.js";
 import { probeHealth } from "../health-probe.js";
+import { createPollLoop, type PollLoop } from "../ingestion/poll-loop.js";
+import { handleSseRequest } from "../ingestion/sse.js";
+import type { TelemetryDbReader } from "../telemetry/sqlite-reader.js";
 import { createIncidentLog, type IncidentStep } from "../incidents.js";
 import { createInstallLock } from "../install-lock.js";
 import { createLogger, type Logger, type LogLevel } from "../logger.js";
@@ -333,6 +336,19 @@ export interface CreateHiveDoctorOptions {
 	/** The status-page port (default {@link DEFAULT_STATUS_PAGE_PORT}). */
 	readonly statusPagePort?: number;
 
+	// ── Telemetry ingestion + SSE seams (hivedoctor PRD-001/PRD-002) ──────────────
+	/**
+	 * Override the telemetry poll-and-merge loop (PRD-001c). Default: the real loop
+	 * (`ingestion/poll-loop.ts`) built over the resolved daemon registry, the shared
+	 * probe, and the real read-only SQLite reader. Tests inject a fake loop (or override
+	 * `openTelemetryDb`/`telemetryProbe` below) so nothing real polls.
+	 */
+	readonly pollLoop?: PollLoop;
+	/** Override the telemetry DB opener the default poll loop uses (default: the real read-only `node:sqlite` reader). Tests inject a fixture/fake reader. */
+	readonly openTelemetryDb?: (path: string) => TelemetryDbReader;
+	/** Telemetry poll interval override, in ms (default 1000, ADR-0001 decision 2). */
+	readonly telemetryPollIntervalMs?: number;
+
 	// ── Injectable production seams (tests override these so nothing real runs) ──
 	/** The restart action (064b/064h owns the real OS restart; default is a logged no-op). */
 	readonly restart?: RestartFn;
@@ -400,6 +416,12 @@ export interface HiveDoctor {
 	readonly pollLoop: UpdatePollLoop;
 	/** The status page server (exposed so the smoke test asserts it started). */
 	readonly statusPage: StatusPageServer;
+	/**
+	 * The telemetry poll-and-merge loop (PRD-001c) feeding the `/events` SSE stream
+	 * (PRD-002a). Exposed so a test can step a tick directly, read the current
+	 * fleet-telemetry snapshot, or drive `reload()` without waiting on the real interval.
+	 */
+	readonly telemetryPollLoop: PollLoop;
 	/** The resolved opt-out (exposed so the smoke test asserts precedence). */
 	readonly optOut: ResolvedOptOut;
 	/** The remediation ladder (exposed so the smoke test confirms rungs 1/2/3 + escalate). */
@@ -675,6 +697,32 @@ export function createHiveDoctor(options: CreateHiveDoctorOptions = {}): HiveDoc
 		autoUpdateDisabled: optOut.autoUpdateDisabled,
 	});
 
+	// ── Telemetry poll-and-merge loop (PRD-001c) + SSE producer (PRD-002a) ────────
+	// Built over the SAME resolved `daemons` registry (PRD-001a) the supervisors above
+	// use, so a service with a `telemetryDbPath` is polled read-only about once a second
+	// and merged with its `/health` probe into the in-memory fleet model the `/events`
+	// SSE stream (wired below, on the status page) forwards to the-hive. Entirely
+	// independent of the supervision/remediation loops above: a telemetry fault here
+	// (PRD-001c c-AC-6) can never affect restart/escalation decisions, and vice versa.
+	// The injected `options.probe` seam is honored here exactly as it is for the
+	// supervisors above (buildDaemon), so a test-injected probe governs telemetry
+	// health too; only the default falls back to the real per-entry probeHealth.
+	const injectedProbe = options.probe;
+	const telemetryProbe =
+		injectedProbe === undefined
+			? (entry: DaemonEntry) => probeHealth({ healthUrl: entry.healthUrl, timeoutMs: config.probeTimeoutMs })
+			: async () => injectedProbe();
+	const telemetryPollLoop: PollLoop =
+		options.pollLoop ??
+		createPollLoop({
+			entries: daemons,
+			clock,
+			logger,
+			probe: telemetryProbe,
+			openDb: options.openTelemetryDb,
+			intervalMs: options.telemetryPollIntervalMs,
+		});
+
 	// ── Local status page (064g) on the loopback comfort port ─────────────────────
 	const readDaemonStatusRows = (): StatusJsonDaemon[] =>
 		built.map(({ entry, stateStore }) => {
@@ -697,6 +745,9 @@ export function createHiveDoctor(options: CreateHiveDoctorOptions = {}): HiveDoc
 			escalation: () => needsAttention.read(),
 		},
 		logger,
+		// PRD-002a: the single hivedoctor-to-the-hive SSE stream, mounted onto the EXISTING
+		// loopback status page rather than a second listener (PRD-002 API changes note).
+		onEvents: (req, res) => handleSseRequest(req, res, { pollLoop: telemetryPollLoop, logger }),
 	});
 
 	// ── Install-health snapshot loop (PRD-064d AC-064d.2) ─────────────────────────
@@ -759,6 +810,7 @@ export function createHiveDoctor(options: CreateHiveDoctorOptions = {}): HiveDoc
 	// One held run-promise per supervisor loop (PRD-004a): start() arms them all, stop() joins them.
 	let supervisorRuns: Promise<void>[] = [];
 	let pollRun: Promise<void> | null = null;
+	let telemetryPollRun: Promise<void> | null = null;
 
 	return {
 		// The exposed supervisor/ladder are the PRIMARY honeycomb daemon's (the process-global
@@ -766,6 +818,7 @@ export function createHiveDoctor(options: CreateHiveDoctorOptions = {}): HiveDoc
 		supervisor: primary.supervisor,
 		supervisors: built.map((b) => b.supervisor),
 		pollLoop,
+		telemetryPollLoop,
 		statusPage,
 		optOut,
 		ladder: primary.ladder,
@@ -793,6 +846,9 @@ export function createHiveDoctor(options: CreateHiveDoctorOptions = {}): HiveDoc
 			// One supervisor loop per registered daemon (PRD-004a a-AC-1).
 			supervisorRuns = built.map((b) => b.supervisor.start());
 			pollRun = pollLoop.start();
+			// Arm the telemetry poll-and-merge loop (PRD-001c): about once per second, feeds
+			// the `/events` SSE stream (PRD-002a) wired onto the status page above.
+			telemetryPollRun = telemetryPollLoop.start();
 			// Arm the install-health heartbeat (PRD-064d AC-064d.2): one snapshot now, then on the
 			// interval. Held like the other loops; stop() disarms it. Fail-soft per emit.
 			installHealthStopped = false;
@@ -810,6 +866,11 @@ export function createHiveDoctor(options: CreateHiveDoctorOptions = {}): HiveDoc
 					reason: error instanceof Error ? error.message : "unknown",
 				});
 			});
+			void telemetryPollRun.catch((error: unknown) => {
+				logger.error("compose.telemetry_poll_loop_threw", {
+					reason: error instanceof Error ? error.message : "unknown",
+				});
+			});
 			void installHealthRun.catch((error: unknown) => {
 				logger.error("compose.install_health_loop_threw", {
 					reason: error instanceof Error ? error.message : "unknown",
@@ -824,6 +885,10 @@ export function createHiveDoctor(options: CreateHiveDoctorOptions = {}): HiveDoc
 			// Disarm every registered daemon's supervisor loop (PRD-004a).
 			for (const b of built) b.supervisor.stop();
 			pollLoop.stop();
+			telemetryPollLoop.stop();
+			// Release every open read-only SQLite handle (PRD-001c): a stopped watchdog must
+			// never keep a service's telemetry database file locked open.
+			telemetryPollLoop.close();
 			// Disarm the install-health heartbeat so its sleep returns and the loop exits.
 			installHealthStopped = true;
 			try {
@@ -838,6 +903,7 @@ export function createHiveDoctor(options: CreateHiveDoctorOptions = {}): HiveDoc
 				await Promise.allSettled([
 					...supervisorRuns,
 					pollRun ?? Promise.resolve(),
+					telemetryPollRun ?? Promise.resolve(),
 					installHealthRun ?? Promise.resolve(),
 				]);
 			} catch {
@@ -845,6 +911,7 @@ export function createHiveDoctor(options: CreateHiveDoctorOptions = {}): HiveDoc
 			}
 			supervisorRuns = [];
 			pollRun = null;
+			telemetryPollRun = null;
 			installHealthRun = null;
 			if (uninstallCrashNet !== null) {
 				uninstallCrashNet();
