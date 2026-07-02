@@ -37,7 +37,7 @@
 
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 
 import { DEFAULTS } from "./config.js";
 import { assertWithinBase } from "./safe-path.js";
@@ -70,7 +70,8 @@ export interface DaemonEntry {
 	readonly restartCooldownMs: number;
 	/**
 	 * Optional path to this service's runtime telemetry SQLite database (leading `~`
-	 * already expanded, like {@link pidPath}). Absent means health-probe-only: no SQLite
+	 * already expanded and the value resolved to a validated ABSOLUTE path; a relative
+	 * path is rejected at parse time). Absent means health-probe-only: no SQLite
 	 * ingestion for this entry (PRD-001a a-AC-2). hivedoctor only ever opens this database
 	 * READ-ONLY (ADR-0001 decision 4, PRD-001b b-AC-3); it never creates or writes it.
 	 */
@@ -200,17 +201,21 @@ function coercePidPath(value: unknown, home: string, fallback: string): string {
 function coerceTelemetryDbPath(value: unknown, home: string): string | undefined {
 	if (typeof value !== "string" || value.trim() === "") return undefined;
 	const expanded = expandTilde(value.trim(), home);
+	// A RELATIVE post-`~` path is rejected outright: it would anchor against whatever
+	// process.cwd() happens to be, so a containment check at parse time could pass under
+	// one cwd while the poll loop later reopens a DIFFERENT file under another. Only an
+	// absolute path has one stable meaning to validate and later open.
+	if (!isAbsolute(expanded)) return undefined;
 	const trustedRoot = join(home, ".honeycomb", "telemetry");
 	try {
-		// The containment CHECK resolves both sides (so a drive-letter-less absolute path
-		// on Windows compares consistently against the base, which `assertWithinBase`
-		// resolves internally), but the RETURNED value stays the un-resolved `expanded`
-		// string, matching `pidPath`'s existing "expand `~`, nothing more" contract.
-		assertWithinBase(trustedRoot, resolve(expanded));
-		return expanded;
+		// Validate the EXACT value returned (the path the poll loop later opens): resolve
+		// normalizes and, on Windows, pins the drive letter of a drive-letter-less absolute
+		// path, and `assertWithinBase` returns the very candidate it checked, so no
+		// differently-anchored reinterpretation can happen downstream.
+		return assertWithinBase(trustedRoot, resolve(expanded));
 	} catch {
-		// Escapes the trusted telemetry root (or is relative/unresolvable): treat exactly
-		// like an absent field rather than honoring an out-of-bounds path.
+		// Escapes the trusted telemetry root: treat exactly like an absent field rather
+		// than honoring an out-of-bounds path.
 		return undefined;
 	}
 }

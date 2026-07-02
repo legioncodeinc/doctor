@@ -704,13 +704,21 @@ export function createHiveDoctor(options: CreateHiveDoctorOptions = {}): HiveDoc
 	// SSE stream (wired below, on the status page) forwards to the-hive. Entirely
 	// independent of the supervision/remediation loops above: a telemetry fault here
 	// (PRD-001c c-AC-6) can never affect restart/escalation decisions, and vice versa.
+	// The injected `options.probe` seam is honored here exactly as it is for the
+	// supervisors above (buildDaemon), so a test-injected probe governs telemetry
+	// health too; only the default falls back to the real per-entry probeHealth.
+	const injectedProbe = options.probe;
+	const telemetryProbe =
+		injectedProbe === undefined
+			? (entry: DaemonEntry) => probeHealth({ healthUrl: entry.healthUrl, timeoutMs: config.probeTimeoutMs })
+			: async () => injectedProbe();
 	const telemetryPollLoop: PollLoop =
 		options.pollLoop ??
 		createPollLoop({
 			entries: daemons,
 			clock,
 			logger,
-			probe: (entry) => probeHealth({ healthUrl: entry.healthUrl, timeoutMs: config.probeTimeoutMs }),
+			probe: telemetryProbe,
 			openDb: options.openTelemetryDb,
 			intervalMs: options.telemetryPollIntervalMs,
 		});

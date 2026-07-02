@@ -282,6 +282,31 @@ describe("poll-loop (PRD-001c)", () => {
 		expect(event.services[0]?.health).toBe("degraded");
 	});
 
+	it("c-AC-6: a telemetry DB whose service_status.name does not match the registry entry is rejected as malformed (no cross-wiring)", async () => {
+		const dir = makeTmp();
+		const dbPath = join(dir, "impostor.sqlite");
+		const fixture = buildFixtureDb(dbPath);
+		// The DB self-identifies as "thehive" but the registry entry points "honeycomb" at it.
+		upsertStatus(fixture, { name: "thehive", bindingTime: "2026-07-01T00:00:00.000Z", lastSeen: "2026-07-01T00:00:00.000Z", health: "ok" });
+		upsertMetrics(fixture, { actionsTaken: 9, filesProcessed: 9, memoriesCreated: 9 }, "2026-07-01T00:00:00.000Z");
+		insertLog(fixture, "2026-07-01T00:00:00.000Z", "info", "must-not-leak");
+		fixture.close();
+
+		const entry = daemon({ name: "honeycomb", healthUrl: "http://127.0.0.1:3850/health", telemetryDbPath: dbPath });
+		const clock = fakeClock(Date.parse("2026-07-01T00:00:00.000Z"));
+		const loop = trackedPollLoop({ entries: [entry], clock, logger: silentLogger, probe: async () => ok });
+
+		const event = await loop.tick();
+		// The mismatch is treated exactly like a malformed DB: fault flagged, degraded, and
+		// NOTHING from the mispointed DB is attributed to the entry -- no status, no
+		// metrics, and no log rows.
+		expect(event.services[0]?.telemetryFault).toBe("malformed");
+		expect(event.services[0]?.health).toBe("degraded");
+		expect(event.services[0]?.lastSeen).toBeNull();
+		expect(event.services[0]?.metrics).toEqual({});
+		expect(event.logs).toEqual([]);
+	});
+
 	it("c-AC-6: recovers on a later tick once the telemetry DB becomes available again", async () => {
 		const dir = makeTmp();
 		const dbPath = join(dir, "honeycomb.sqlite");
@@ -351,6 +376,35 @@ describe("poll-loop (PRD-001c)", () => {
 		loop.reload([b]);
 		const after = await loop.tick();
 		expect(after.services.map((s) => s.name)).toEqual(["b"]);
+	});
+
+	it("c-AC-5: reload() with a same-name entry whose telemetryDbPath changed drops the cached runtime and reads the new DB from the start", async () => {
+		const dir = makeTmp();
+		const oldPath = join(dir, "old.sqlite");
+		const newPath = join(dir, "new.sqlite");
+		const oldDb = buildFixtureDb(oldPath);
+		upsertStatus(oldDb, { name: "honeycomb", bindingTime: "2026-07-01T00:00:00.000Z", lastSeen: "2026-07-01T00:00:00.000Z", health: "ok" });
+		insertLog(oldDb, "2026-07-01T00:00:00.000Z", "info", "old-line-0");
+		insertLog(oldDb, "2026-07-01T00:00:01.000Z", "info", "old-line-1");
+		oldDb.close();
+		const newDb = buildFixtureDb(newPath);
+		upsertStatus(newDb, { name: "honeycomb", bindingTime: "2026-07-01T00:00:02.000Z", lastSeen: "2026-07-01T00:00:02.000Z", health: "ok" });
+		insertLog(newDb, "2026-07-01T00:00:02.000Z", "info", "new-line-0");
+		newDb.close();
+
+		const before = daemon({ name: "honeycomb", healthUrl: "http://127.0.0.1:3850/health", telemetryDbPath: oldPath });
+		const clock = fakeClock(Date.parse("2026-07-01T00:00:02.000Z"));
+		const loop = trackedPollLoop({ entries: [before], clock, logger: silentLogger, probe: async () => ok });
+
+		const first = await loop.tick();
+		expect(first.logs.map((l) => l.message)).toEqual(["old-line-0", "old-line-1"]);
+
+		// Same name, different telemetryDbPath: without eviction the loop would keep the
+		// old handle open (pollEntry reopens only when the handle is null) and its stale
+		// lastLogId (2) would skip new-line-0 (id 1) in the new DB entirely.
+		loop.reload([{ ...before, telemetryDbPath: newPath }]);
+		const second = await loop.tick();
+		expect(second.logs.map((l) => l.message)).toEqual(["new-line-0"]);
 	});
 
 	it("snapshot() returns the latest merged event without polling again", async () => {

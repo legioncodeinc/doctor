@@ -257,6 +257,8 @@ function handleRequest(
 	onEvents: ((req: IncomingMessage, res: ServerResponse) => void) | undefined,
 ): void {
 	const path = req.url ?? "/";
+	// The discovery list the 404 fallback reports: /events exists only when wired.
+	const knownPaths = onEvents === undefined ? ["/", "/status.json"] : ["/", "/status.json", "/events"];
 
 	if (path === "/events" && onEvents !== undefined) {
 		onEvents(req, res);
@@ -287,7 +289,7 @@ function handleRequest(
 
 	// 404 for anything else.
 	res.writeHead(404, { "Content-Type": "application/json" });
-	res.end(JSON.stringify({ error: "not found", paths: ["/", "/status.json"] }));
+	res.end(JSON.stringify({ error: "not found", paths: knownPaths }));
 }
 
 // ── Factory ───────────────────────────────────────────────────────────────────

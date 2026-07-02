@@ -124,16 +124,21 @@ describe("createHiveDoctor telemetry wiring (PRD-001/PRD-002)", () => {
 
 	it("wires /events onto the existing status page and it emits a well-formed fleet-telemetry frame", async () => {
 		const doctor = buildDoctor();
+		// The status page is started DIRECTLY here (not via doctor.start()), so doctor.stop()
+		// would be a no-op for it; stop it explicitly in finally so the HTTP server never
+		// leaks across tests, even when an assertion above fails.
 		doctor.statusPage.start();
-		const port = await waitForPort(doctor);
+		try {
+			const port = await waitForPort(doctor);
 
-		const { statusCode, body } = await fetchEventsFirstFrame(port);
-		expect(statusCode).toBe(200);
-		expect(body).toContain("event: fleet-telemetry");
-		expect(body).toContain('"services"');
-		expect(body).toContain('"logs"');
-
-		await doctor.stop();
+			const { statusCode, body } = await fetchEventsFirstFrame(port);
+			expect(statusCode).toBe(200);
+			expect(body).toContain("event: fleet-telemetry");
+			expect(body).toContain('"services"');
+			expect(body).toContain('"logs"');
+		} finally {
+			doctor.statusPage.stop();
+		}
 	});
 
 	it("a registered entry with telemetryDbPath feeds the telemetry poll loop end to end", async () => {
@@ -156,24 +161,27 @@ describe("createHiveDoctor telemetry wiring (PRD-001/PRD-002)", () => {
 			],
 		});
 
-		const event = await doctor.telemetryPollLoop.tick();
-		expect(event.services).toEqual([
-			{
-				name: "honeycomb",
-				health: "ok",
-				lastSeen: "2026-07-01T00:00:00.000Z",
-				metrics: { actionsTaken: 4, filesProcessed: 2, memoriesCreated: 1 },
-				deeplake: { connected: true, lastCommunicationAt: "2026-07-01T00:00:00.000Z" },
-				telemetryFault: null,
-			},
-		]);
-
-		// stop() without a matching start() is a documented no-op (mirrors every other
-		// pre-existing test in this repo that drives a loop directly without the full
-		// lifecycle); close the poll loop's cached read-only handle explicitly so the tmp
-		// dir cleanup below does not race an open SQLite file on Windows.
-		doctor.telemetryPollLoop.close();
-		await doctor.stop();
+		try {
+			const event = await doctor.telemetryPollLoop.tick();
+			expect(event.services).toEqual([
+				{
+					name: "honeycomb",
+					health: "ok",
+					lastSeen: "2026-07-01T00:00:00.000Z",
+					metrics: { actionsTaken: 4, filesProcessed: 2, memoriesCreated: 1 },
+					deeplake: { connected: true, lastCommunicationAt: "2026-07-01T00:00:00.000Z" },
+					telemetryFault: null,
+				},
+			]);
+		} finally {
+			// stop() without a matching start() is a documented no-op (mirrors every other
+			// pre-existing test in this repo that drives a loop directly without the full
+			// lifecycle); close the poll loop's cached read-only handle explicitly, in a
+			// finally so a failed assertion above cannot leak it, so the tmp dir cleanup
+			// below does not race an open SQLite file on Windows (EBUSY).
+			doctor.telemetryPollLoop.close();
+			await doctor.stop();
+		}
 	});
 
 	it("a legacy entry with no telemetryDbPath stays health-probe-only in the telemetry model too", async () => {

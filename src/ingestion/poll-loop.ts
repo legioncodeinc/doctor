@@ -186,6 +186,18 @@ export function createPollLoop(options: PollLoopOptions): PollLoop {
 		try {
 			if (r.db === null) r.db = openDb(entry.telemetryDbPath);
 			const status = r.db.readStatus();
+			if (status !== null && status.name !== entry.name) {
+				// `ServiceStatusRow.name` is the contract key back to the registry entry
+				// (PRD-001b b-AC-5). A DB whose own recorded name does not match this entry
+				// is treated as MALFORMED, not attributed: a mispointed telemetryDbPath must
+				// never cross-wire one service's status/metrics/logs onto another. Throwing
+				// here routes through the c-AC-6 isolation path below (close + drop the
+				// handle, degrade to probe-only, flag telemetryFault) BEFORE any row from
+				// this DB is cached or forwarded.
+				throw new Error(
+					`malformed telemetry db: service_status.name "${status.name}" does not match registry entry "${entry.name}"`,
+				);
+			}
 			const metrics = r.db.readMetrics();
 			const { rows, maxId } = r.db.readNewLogs(r.lastLogId, logWindowLimit);
 			r.lastLogId = maxId;
@@ -295,10 +307,17 @@ export function createPollLoop(options: PollLoopOptions): PollLoop {
 		snapshot: (): FleetTelemetryEvent => latest,
 
 		reload(nextEntries: readonly DaemonEntry[]): void {
+			// Evict runtime state for daemons no longer present, AND for a same-name daemon
+			// whose telemetryDbPath changed or disappeared: pollEntry reopens only when the
+			// cached handle is null, so keeping the runtime would keep reading the OLD file,
+			// and its stale lastLogId could skip the start of the new DB entirely. Dropping
+			// the runtime closes the old handle and resets the cursor so the next tick
+			// reopens the new path fresh.
+			const previousPaths = new Map(entries.map((entry) => [entry.name, entry.telemetryDbPath]));
+			const nextPaths = new Map(nextEntries.map((entry) => [entry.name, entry.telemetryDbPath]));
 			entries = nextEntries;
-			const nextNames = new Set(nextEntries.map((entry) => entry.name));
 			for (const [name, r] of runtime) {
-				if (!nextNames.has(name)) {
+				if (!nextPaths.has(name) || nextPaths.get(name) !== previousPaths.get(name)) {
 					closeHandle(r);
 					runtime.delete(name);
 				}

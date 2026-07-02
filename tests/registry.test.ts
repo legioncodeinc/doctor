@@ -11,7 +11,7 @@
 
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
@@ -287,17 +287,20 @@ describe("registry: PRD-001a telemetryDbPath extension", () => {
 
 		const entries = readRegistryFile(path, HOME);
 		expect(entries).not.toBeNull();
-		expect(entries?.[0]?.telemetryDbPath).toBe(join(HOME, ".honeycomb", "telemetry", "honeycomb.sqlite"));
+		// The parsed value is the RESOLVED absolute path (the exact path the containment
+		// guard validated); `resolve` is an identity on POSIX and pins the drive letter of
+		// a drive-letter-less absolute path on Windows.
+		expect(entries?.[0]?.telemetryDbPath).toBe(resolve(join(HOME, ".honeycomb", "telemetry", "honeycomb.sqlite")));
 	});
 
-	it("a-AC-1: an absolute telemetryDbPath already under the trusted telemetry root is preserved verbatim", () => {
+	it("a-AC-1: an absolute telemetryDbPath already under the trusted telemetry root is preserved (in resolved form)", () => {
 		const absolutePath = join(HOME, ".honeycomb", "telemetry", "hivenectar.sqlite");
 		const path = writeRegistry(
 			JSON.stringify({ daemons: [{ name: "hivenectar", healthUrl: "http://127.0.0.1:3854/health", telemetryDbPath: absolutePath }] }),
 		);
 
 		const entries = readRegistryFile(path, HOME);
-		expect(entries?.[0]?.telemetryDbPath).toBe(absolutePath);
+		expect(entries?.[0]?.telemetryDbPath).toBe(resolve(absolutePath));
 	});
 
 	it("security: a telemetryDbPath OUTSIDE ~/.honeycomb/telemetry/ falls back to undefined (health-probe-only), never opened verbatim", () => {
@@ -331,7 +334,18 @@ describe("registry: PRD-001a telemetryDbPath extension", () => {
 		);
 
 		const entries = readRegistryFile(path, HOME);
-		expect(entries?.[0]?.telemetryDbPath).toBe(join(HOME, ".honeycomb", "telemetry", "nested", "honeycomb.sqlite"));
+		expect(entries?.[0]?.telemetryDbPath).toBe(resolve(join(HOME, ".honeycomb", "telemetry", "nested", "honeycomb.sqlite")));
+	});
+
+	it("security: a RELATIVE telemetryDbPath is rejected outright (its meaning would depend on process.cwd()), falling back to undefined", () => {
+		const path = writeRegistry(
+			JSON.stringify({
+				daemons: [{ name: "honeycomb", healthUrl: "http://127.0.0.1:3850/health", telemetryDbPath: "relative/telemetry/honeycomb.sqlite" }],
+			}),
+		);
+
+		const entries = readRegistryFile(path, HOME);
+		expect(entries?.[0]?.telemetryDbPath).toBeUndefined();
 	});
 
 	it("a-AC-2: a legacy entry with no telemetryDbPath field loads without error, health-probe-only", () => {
@@ -409,7 +423,7 @@ describe("registry: PRD-001a telemetryDbPath extension", () => {
 			startupGraceMs: 45_000,
 			restartGiveUpThreshold: 5,
 			restartCooldownMs: 2_500,
-			telemetryDbPath: join(HOME, ".honeycomb", "telemetry", "hivenectar.sqlite"),
+			telemetryDbPath: resolve(join(HOME, ".honeycomb", "telemetry", "hivenectar.sqlite")),
 		});
 	});
 
