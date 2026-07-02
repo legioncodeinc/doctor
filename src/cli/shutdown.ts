@@ -2,7 +2,7 @@
  * One-shot CLI shutdown: close the global fetch pool, release lingering handles, exit cleanly.
  *
  * ── The bug this fixes (Windows `UV_HANDLE_CLOSING`) ────────────────────────────────────
- * A one-shot HiveDoctor command (`status`, `diagnose`, `update --check`, `logs`,
+ * A one-shot Doctor command (`status`, `diagnose`, `update --check`, `logs`,
  * `self-update`) does network work through the Node global `fetch` (registry + blessed-channel
  * reads) and `node:child_process` (npm). On exit it tripped a libuv assertion on Windows:
  *

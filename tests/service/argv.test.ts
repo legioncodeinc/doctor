@@ -88,10 +88,10 @@ describe("schtasks argv (Windows per-user, the default)", () => {
 	// Stage a unit path the way the module does for the schtasks /XML path.
 	const plan = {
 		...resolveServicePlan(fixedEnv({ platform: "win32", home: "C:\\Users\\t" })),
-		unitPath: "C:\\Users\\t\\.honeycomb\\hivedoctor\\hivedoctor-task.xml",
+		unitPath: "C:\\Users\\t\\.honeycomb\\doctor\\doctor-task.xml",
 	};
 
-	it("install: /Create /XML <file> /TN HiveDoctor /F then /Run", () => {
+	it("install: /Create /XML <file> /TN Doctor /F then /Run", () => {
 		const cmds = installCommands(plan, UID);
 		expect(cmds[0]).toEqual({
 			command: "schtasks",
@@ -100,14 +100,14 @@ describe("schtasks argv (Windows per-user, the default)", () => {
 		expect(cmds[1]).toEqual({ command: "schtasks", args: ["/Run", "/TN", WINDOWS_TASK_NAME] });
 	});
 
-	it("uninstall: /Delete /TN HiveDoctor /F", () => {
+	it("uninstall: /Delete /TN Doctor /F", () => {
 		expect(uninstallCommands(plan, UID)[0]).toEqual({
 			command: "schtasks",
 			args: ["/Delete", "/TN", WINDOWS_TASK_NAME, "/F"],
 		});
 	});
 
-	it("status: /Query /TN HiveDoctor", () => {
+	it("status: /Query /TN Doctor", () => {
 		expect(statusCommand(plan, UID)).toEqual({
 			command: "schtasks",
 			args: ["/Query", "/TN", WINDOWS_TASK_NAME],

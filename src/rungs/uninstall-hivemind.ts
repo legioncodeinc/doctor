@@ -11,7 +11,7 @@
  * removes the npm PACKAGE only. It NEVER touches the shared `~/.deeplake/` state -
  * credentials and onboarding live there and Honeycomb still depends on them. There is
  * literally no code path in this rung that writes to or deletes `~/.deeplake/`; the
- * only filesystem write is the timestamped backup record under HiveDoctor's OWN
+ * only filesystem write is the timestamped backup record under Doctor's OWN
  * workspace dir.
  *
  * Backup-before-removal (AC-064c.5): before issuing the uninstall, a timestamped JSON
@@ -59,7 +59,7 @@ export interface UninstallHivemindRungDeps {
 	 * the real impl runs `npm ls -g @deeplake/hivemind` through the runner.
 	 */
 	readonly detectHivemind: DetectHivemindFn;
-	/** HiveDoctor's workspace dir; the backup record is written under it (NOT `~/.deeplake/`). */
+	/** Doctor's workspace dir; the backup record is written under it (NOT `~/.deeplake/`). */
 	readonly workspaceDir: string;
 	/** Injected clock for the backup timestamp (defaults to `Date.now`). */
 	readonly now?: () => number;

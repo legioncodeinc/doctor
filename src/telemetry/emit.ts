@@ -1,5 +1,5 @@
 /**
- * HiveDoctor's SINGLE telemetry-egress chokepoint (PRD-064d).
+ * Doctor's SINGLE telemetry-egress chokepoint (PRD-064d).
  *
  * `emitTelemetry(record, deps)` is the ONLY function that posts to the PostHog
  * Logs OTLP endpoint. Three streams flow through it:
@@ -51,7 +51,7 @@ import { arch, platform } from "node:os";
 
 import type { Incident } from "../incidents.js";
 import type { Logger } from "../logger.js";
-import type { HiveDoctorState } from "../state.js";
+import type { DoctorState } from "../state.js";
 import {
 	SEVERITY_ERROR,
 	SEVERITY_INFO,
@@ -94,7 +94,7 @@ export const POSTHOG_HOST: string =
 export const OTLP_LOGS_PATH = "/i/v1/logs" as const;
 
 /** The OTLP scope name stamped in every envelope. */
-export const SCOPE_NAME = "hivedoctor" as const;
+export const SCOPE_NAME = "doctor" as const;
 
 /** Build the full OTLP Logs URL from a host string. */
 export function otlpLogsUrl(host: string = POSTHOG_HOST): string {
@@ -134,8 +134,8 @@ export function isOptedOut(env: NodeJS.ProcessEnv = process.env): boolean {
  * Fields:
  *   `stream`          - which stream fired: "error" | "install-health" | "episode"
  *   `device_id`       - the stable per-install PRD-033 UUID (for correlation)
- *   `service.name`    - always "hivedoctor"
- *   `hivedoctor_version` - the HiveDoctor package version
+ *   `service.name`    - always "doctor"
+ *   `doctor_version` - the Doctor package version
  *   `daemon_version`  - the Honeycomb daemon version last observed
  *   `os`              - coarse OS family (darwin/win32/linux)
  *   `arch`            - CPU arch (arm64/x64/...)
@@ -153,7 +153,7 @@ export const ALLOWED_ATTRIBUTE_KEYS = [
 	"stream",
 	"device_id",
 	"service.name",
-	"hivedoctor_version",
+	"doctor_version",
 	"daemon_version",
 	"os",
 	"arch",
@@ -254,11 +254,11 @@ export interface InstallHealthRecord {
 	/** Timestamp in ms. */
 	readonly timestampMs: number;
 	/** Last-known daemon health from state.json. */
-	readonly lastKnownHealth: HiveDoctorState["lastKnownHealth"];
+	readonly lastKnownHealth: DoctorState["lastKnownHealth"];
 	/** Age since last successful heal in SECONDS, or null if never healed. Bucketed below 63 chars. */
 	readonly lastHealAgeSeconds: number | null;
-	/** HiveDoctor package version. */
-	readonly hivedoctorVersion: string;
+	/** Doctor package version. */
+	readonly doctorVersion: string;
 	/** Daemon version last observed (may be "unknown"). */
 	readonly daemonVersion: string;
 }
@@ -272,8 +272,8 @@ export interface EpisodeRecord {
 	readonly deviceId: string;
 	/** Timestamp in ms (use the incident closedAt). */
 	readonly timestampMs: number;
-	/** HiveDoctor package version. */
-	readonly hivedoctorVersion: string;
+	/** Doctor package version. */
+	readonly doctorVersion: string;
 	/** Daemon version last observed (may be "unknown"). */
 	readonly daemonVersion: string;
 }
@@ -312,8 +312,8 @@ export interface EmitDeps {
 	readonly posthogKey?: string;
 	/** Override the PostHog host (tests use a fake URL so no real network is hit). */
 	readonly posthogHost?: string;
-	/** Override the HiveDoctor version in the resource attributes. */
-	readonly hivedoctorVersion?: string;
+	/** Override the Doctor version in the resource attributes. */
+	readonly doctorVersion?: string;
 	/** POST timeout in ms. Defaults to 2000 (2s). */
 	readonly timeoutMs?: number;
 	/** Optional logger for the "swallowed" path (logs the drop, never throws). */
@@ -365,14 +365,14 @@ export const DEFAULT_EMIT_TIMEOUT_MS = 2_000 as const;
  */
 function buildResourceAttributes(input: {
 	readonly deviceId: string;
-	readonly hivedoctorVersion: string;
+	readonly doctorVersion: string;
 	readonly daemonVersion?: string;
 }): Record<AllowedAttributeKey, string> {
 	const facts = platformFacts();
 	return buildAllowedAttributes({
 		"service.name": SCOPE_NAME,
 		device_id: input.deviceId,
-		hivedoctor_version: input.hivedoctorVersion,
+		doctor_version: input.doctorVersion,
 		daemon_version: input.daemonVersion ?? "unknown",
 		os: facts.os,
 		arch: facts.arch,
@@ -548,7 +548,7 @@ export async function emitTelemetry(record: TelemetryRecord, deps: EmitDeps = {}
 	if (deps.stateTelemetryDisabled === true) return { sent: false, skipped: "opted_out" };
 
 	// All gates passed. Build the OTLP envelope.
-	const hivedoctorVersion = deps.hivedoctorVersion ?? "0.0.0-dev";
+	const doctorVersion = deps.doctorVersion ?? "0.0.0-dev";
 	const host = deps.posthogHost ?? POSTHOG_HOST;
 	const url = otlpLogsUrl(host);
 
@@ -556,7 +556,7 @@ export async function emitTelemetry(record: TelemetryRecord, deps: EmitDeps = {}
 		// Build per-stream resource attributes (shared across all records in the POST).
 		const resourceAttributes = buildResourceAttributes({
 			deviceId: record.kind === "error" ? record.deviceId : record.deviceId,
-			hivedoctorVersion,
+			doctorVersion,
 			daemonVersion:
 				record.kind === "install-health"
 					? record.daemonVersion
@@ -577,7 +577,7 @@ export async function emitTelemetry(record: TelemetryRecord, deps: EmitDeps = {}
 		const logsData = buildLogsData({
 			resourceAttributes,
 			scopeName: SCOPE_NAME,
-			scopeVersion: hivedoctorVersion,
+			scopeVersion: doctorVersion,
 			logRecords: [logRecord],
 		});
 

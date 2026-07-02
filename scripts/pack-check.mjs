@@ -1,9 +1,9 @@
 #!/usr/bin/env node
-// HiveDoctor's publish gate (PRD-063 INT-2), the package-local analogue of the
+// Doctor's publish gate (PRD-063 INT-2), the package-local analogue of the
 // repo-root scripts/pack-check.mjs. Refuse a publish if `npm pack` would include
 // filenames that must never ship - credentials, CI workflows, git internals, key
 // material - and refuse a publish that DROPS the one required runtime file (the
-// `hivedoctor` bin). Catches a future PR widening package.json's `files` array
+// `doctor` bin). Catches a future PR widening package.json's `files` array
 // (or switching to a permissive .npmignore) BEFORE any token is touched.
 //
 // This is the same ci-release-stinger hard rule the parent enforces (#4/#5: what
@@ -44,7 +44,7 @@ if (hits.length) {
 	process.exit(1);
 }
 
-// Belt-and-suspenders against shipping the SOURCE tree: HiveDoctor's runtime is
+// Belt-and-suspenders against shipping the SOURCE tree: Doctor's runtime is
 // the single bundled bin. A `files` allowlist that accidentally globbed in
 // `src/` or `tests/` would bloat the tarball and leak un-minified source; the
 // package ships ONLY bundle/ + README + LICENSE. Refuse if any src/ or tests/
@@ -58,12 +58,12 @@ if (leaks.length) {
 	process.exit(1);
 }
 
-// Required runtime file: a publish that DROPS the `hivedoctor` bin from the
+// Required runtime file: a publish that DROPS the `doctor` bin from the
 // `files` allowlist ships a broken package (the `bin` field points at
-// `bundle/cli.js`; an install missing it cannot run `hivedoctor`). This positive
+// `bundle/cli.js`; an install missing it cannot run `doctor`). This positive
 // check catches that regression, which the forbidden-only scan above cannot.
 const REQUIRED = [
-	/(^|\/)bundle\/cli\.js$/, // the `hivedoctor` bin (package.json#bin target)
+	/(^|\/)bundle\/cli\.js$/, // the `doctor` bin (package.json#bin target)
 ];
 const missing = REQUIRED.filter((rx) => !entries.some((p) => rx.test(p)));
 if (missing.length) {

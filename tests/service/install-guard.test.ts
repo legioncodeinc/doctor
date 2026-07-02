@@ -3,58 +3,58 @@
  * accepted as an alias).
  *
  * Asserts the pure decision the two shell installers mirror: when the flag or the env
- * equivalent is present, the HiveDoctor bootstrap (npm install + service registration) is
- * skipped, so the service module is NEVER invoked and no HiveDoctor process runs.
+ * equivalent is present, the Doctor bootstrap (npm install + service registration) is
+ * skipped, so the service module is NEVER invoked and no Doctor process runs.
  */
 
 import { describe, expect, it } from "vitest";
 
 import { dispatch, EXIT_OK } from "../../src/cli/dispatch.js";
-import { shouldBootstrapHiveDoctor } from "../../src/service/install-guard.js";
+import { shouldBootstrapDoctor } from "../../src/service/install-guard.js";
 import { createServiceModule } from "../../src/service/index.js";
 import { buildCliHarness } from "../cli/helpers/fake-cli.js";
 import { createMemoryFs, createRecordingRunner, fixedEnv } from "./helpers.js";
 
-describe("shouldBootstrapHiveDoctor (AC-064b.4)", () => {
+describe("shouldBootstrapDoctor (AC-064b.4)", () => {
 	it("defaults to true with a plain install argv + clean env", () => {
-		expect(shouldBootstrapHiveDoctor({ argv: ["--ref", "mario"], env: {} })).toBe(true);
-		expect(shouldBootstrapHiveDoctor({ argv: [], env: {} })).toBe(true);
+		expect(shouldBootstrapDoctor({ argv: ["--ref", "mario"], env: {} })).toBe(true);
+		expect(shouldBootstrapDoctor({ argv: [], env: {} })).toBe(true);
 	});
 
 	it("returns false when --no-doctor is passed", () => {
-		expect(shouldBootstrapHiveDoctor({ argv: ["--no-doctor"], env: {} })).toBe(false);
-		expect(shouldBootstrapHiveDoctor({ argv: ["--ref", "x", "--no-doctor"], env: {} })).toBe(false);
+		expect(shouldBootstrapDoctor({ argv: ["--no-doctor"], env: {} })).toBe(false);
+		expect(shouldBootstrapDoctor({ argv: ["--ref", "x", "--no-doctor"], env: {} })).toBe(false);
 	});
 
 	it("returns false when the pre-rename --no-hivedoctor alias is passed", () => {
-		expect(shouldBootstrapHiveDoctor({ argv: ["--no-hivedoctor"], env: {} })).toBe(false);
-		expect(shouldBootstrapHiveDoctor({ argv: ["--ref", "x", "--no-hivedoctor"], env: {} })).toBe(false);
+		expect(shouldBootstrapDoctor({ argv: ["--no-hivedoctor"], env: {} })).toBe(false);
+		expect(shouldBootstrapDoctor({ argv: ["--ref", "x", "--no-hivedoctor"], env: {} })).toBe(false);
 	});
 
 	it("returns false on the env opt-out (1 / true, case-insensitive)", () => {
-		expect(shouldBootstrapHiveDoctor({ argv: [], env: { HONEYCOMB_NO_DOCTOR: "1" } })).toBe(false);
-		expect(shouldBootstrapHiveDoctor({ argv: [], env: { HONEYCOMB_NO_DOCTOR: "true" } })).toBe(false);
-		expect(shouldBootstrapHiveDoctor({ argv: [], env: { HONEYCOMB_NO_DOCTOR: "TRUE" } })).toBe(false);
+		expect(shouldBootstrapDoctor({ argv: [], env: { HONEYCOMB_NO_DOCTOR: "1" } })).toBe(false);
+		expect(shouldBootstrapDoctor({ argv: [], env: { HONEYCOMB_NO_DOCTOR: "true" } })).toBe(false);
+		expect(shouldBootstrapDoctor({ argv: [], env: { HONEYCOMB_NO_DOCTOR: "TRUE" } })).toBe(false);
 	});
 
 	it("returns false on the pre-rename env alias (HONEYCOMB_NO_HIVEDOCTOR)", () => {
-		expect(shouldBootstrapHiveDoctor({ argv: [], env: { HONEYCOMB_NO_HIVEDOCTOR: "1" } })).toBe(false);
-		expect(shouldBootstrapHiveDoctor({ argv: [], env: { HONEYCOMB_NO_HIVEDOCTOR: "true" } })).toBe(false);
-		expect(shouldBootstrapHiveDoctor({ argv: [], env: { HONEYCOMB_NO_HIVEDOCTOR: "TRUE" } })).toBe(false);
+		expect(shouldBootstrapDoctor({ argv: [], env: { HONEYCOMB_NO_HIVEDOCTOR: "1" } })).toBe(false);
+		expect(shouldBootstrapDoctor({ argv: [], env: { HONEYCOMB_NO_HIVEDOCTOR: "true" } })).toBe(false);
+		expect(shouldBootstrapDoctor({ argv: [], env: { HONEYCOMB_NO_HIVEDOCTOR: "TRUE" } })).toBe(false);
 	});
 
 	it("a non-truthy env value does NOT opt out (0 / empty / garbage -> still bootstrap)", () => {
-		expect(shouldBootstrapHiveDoctor({ argv: [], env: { HONEYCOMB_NO_DOCTOR: "0" } })).toBe(true);
-		expect(shouldBootstrapHiveDoctor({ argv: [], env: { HONEYCOMB_NO_DOCTOR: "" } })).toBe(true);
-		expect(shouldBootstrapHiveDoctor({ argv: [], env: { HONEYCOMB_NO_DOCTOR: "no" } })).toBe(true);
-		expect(shouldBootstrapHiveDoctor({ argv: [], env: { HONEYCOMB_NO_HIVEDOCTOR: "0" } })).toBe(true);
+		expect(shouldBootstrapDoctor({ argv: [], env: { HONEYCOMB_NO_DOCTOR: "0" } })).toBe(true);
+		expect(shouldBootstrapDoctor({ argv: [], env: { HONEYCOMB_NO_DOCTOR: "" } })).toBe(true);
+		expect(shouldBootstrapDoctor({ argv: [], env: { HONEYCOMB_NO_DOCTOR: "no" } })).toBe(true);
+		expect(shouldBootstrapDoctor({ argv: [], env: { HONEYCOMB_NO_HIVEDOCTOR: "0" } })).toBe(true);
 	});
 });
 
 describe("AC-064b.4: opted out -> the service module is never invoked", () => {
 	/**
-	 * The installer's contract: if shouldBootstrapHiveDoctor is false, it neither installs the
-	 * package nor calls `hivedoctor install-service`. We model that here: the install-service
+	 * The installer's contract: if shouldBootstrapDoctor is false, it neither installs the
+	 * package nor calls `doctor install-service`. We model that here: the install-service
 	 * command is only dispatched when the guard allows it; under opt-out it never runs, so the
 	 * real module's runner/fs are never touched.
 	 */
@@ -66,14 +66,14 @@ describe("AC-064b.4: opted out -> the service module is never invoked", () => {
 		const runner = createRecordingRunner();
 		const fs = createMemoryFs();
 		const serviceModule = createServiceModule({
-			execPath: "/usr/bin/hivedoctor",
+			execPath: "/usr/bin/doctor",
 			runner,
 			fs,
 			environment: fixedEnv({ platform: "linux", home: "/home/t" }),
 		});
 		const h = buildCliHarness({ serviceModule });
 
-		if (!shouldBootstrapHiveDoctor({ argv, env })) {
+		if (!shouldBootstrapDoctor({ argv, env })) {
 			return { ran: false, runnerCalls: runner.calls.length, writes: fs.writes.length };
 		}
 		const code = await dispatch(["install-service"], h.ctx);

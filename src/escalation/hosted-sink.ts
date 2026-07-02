@@ -1,5 +1,5 @@
 /**
- * HiveDoctor hosted escalation sink (PRD-064g AC-064g.3).
+ * Doctor hosted escalation sink (PRD-064g AC-064g.3).
  *
  * When the ladder exhausts and an escalation fires, this module emits a high-severity
  * OTLP log record to PostHog via the 064d telemetry chokepoint so we are notified
@@ -36,8 +36,8 @@ export interface HostedSinkOptions {
 	readonly escalation: EscalationRecord;
 	/** The stable per-install UUID (PRD-033) for device_id correlation. */
 	readonly deviceId: string;
-	/** HiveDoctor package version. */
-	readonly hivedoctorVersion: string;
+	/** Doctor package version. */
+	readonly doctorVersion: string;
 	/** Daemon version last observed (or "unknown"). */
 	readonly daemonVersion: string;
 	/** Current wall-clock ms (injected for tests). Defaults to Date.now(). */
@@ -88,7 +88,7 @@ export async function emitEscalationToHostedSink(options: HostedSinkOptions): Pr
 				incident,
 				deviceId: options.deviceId,
 				timestampMs,
-				hivedoctorVersion: options.hivedoctorVersion,
+				doctorVersion: options.doctorVersion,
 				daemonVersion: options.daemonVersion,
 			},
 			options.emitDeps,

@@ -16,7 +16,7 @@ describe("install - writes the unit file then runs the manager argv", () => {
 		const runner = createRecordingRunner();
 		const fs = createMemoryFs();
 		const module = createServiceModule({
-			execPath: "/usr/bin/hivedoctor",
+			execPath: "/usr/bin/doctor",
 			runner,
 			fs,
 			environment: fixedEnv({ platform: "linux", home: "/home/t" }),
@@ -48,7 +48,7 @@ describe("install - writes the unit file then runs the manager argv", () => {
 		const runner = createRecordingRunner();
 		const fs = createMemoryFs();
 		const module = createServiceModule({
-			execPath: "/opt/hivedoctor",
+			execPath: "/opt/doctor",
 			runner,
 			fs,
 			environment: fixedEnv({ platform: "darwin", home: "/Users/t" }),
@@ -70,7 +70,7 @@ describe("install - writes the unit file then runs the manager argv", () => {
 		const runner = createRecordingRunner();
 		const fs = createMemoryFs();
 		const module = createServiceModule({
-			execPath: "C:\\bin\\hivedoctor.cmd",
+			execPath: "C:\\bin\\doctor.cmd",
 			runner,
 			fs,
 			environment: fixedEnv({ platform: "win32", home: "C:\\Users\\t" }),
@@ -78,7 +78,7 @@ describe("install - writes the unit file then runs the manager argv", () => {
 
 		const result = await module.install();
 
-		const staged = "C:\\Users\\t/.honeycomb/hivedoctor/hivedoctor-task.xml";
+		const staged = "C:\\Users\\t/.honeycomb/doctor/doctor-task.xml";
 		// IRD-192 AC-2: the staged XML carries the Task-Scheduler-valid PT1M interval.
 		expect(fs.files.get(staged)).toContain("<Interval>PT1M</Interval>");
 		expect(fs.files.get(staged)).toContain("<Task ");
@@ -98,7 +98,7 @@ describe("install - writes the unit file then runs the manager argv", () => {
 		const runner = createRecordingRunner();
 		const fs = createMemoryFs(true); // writeFile throws
 		const module = createServiceModule({
-			execPath: "/usr/bin/hivedoctor",
+			execPath: "/usr/bin/doctor",
 			runner,
 			fs,
 			environment: fixedEnv({ platform: "linux" }),
@@ -107,7 +107,7 @@ describe("install - writes the unit file then runs the manager argv", () => {
 		const result = await module.install();
 		// A unit-write failure is ok:false (a non-successful install), still never a throw.
 		expect(result.ok).toBe(false);
-		expect(result.message).toContain("Could not write the HiveDoctor unit file");
+		expect(result.message).toContain("Could not write the Doctor unit file");
 		// The manager's INSTALL argv was not run (we never got past the write); only the
 		// best-effort decision-#32 legacy dereg preceded it.
 		expect(runner.calls).toHaveLength(1);
@@ -120,7 +120,7 @@ describe("install - writes the unit file then runs the manager argv", () => {
 		);
 		const fs = createMemoryFs();
 		const module = createServiceModule({
-			execPath: "/usr/bin/hivedoctor",
+			execPath: "/usr/bin/doctor",
 			runner,
 			fs,
 			environment: fixedEnv({ platform: "linux" }),
@@ -139,7 +139,7 @@ describe("install - writes the unit file then runs the manager argv", () => {
 
 	// IRD-192 AC-6 (Windows root-cause scenario): a failed `schtasks /Create` resolves ok:false so
 	// the CLI exit code is non-zero and the installer does not claim the watchdog is watching. The
-	// staged XML is still written (so `hivedoctor install-service` re-run can inspect it), but the
+	// staged XML is still written (so `doctor install-service` re-run can inspect it), but the
 	// install is honestly a failure.
 	it("AC-6: Windows schtasks /Create failure -> ok:false (the IRD-192 root-cause scenario)", async () => {
 		const runner = createRecordingRunner((command, args) =>
@@ -149,7 +149,7 @@ describe("install - writes the unit file then runs the manager argv", () => {
 		);
 		const fs = createMemoryFs();
 		const module = createServiceModule({
-			execPath: "C:\\bin\\hivedoctor.cmd",
+			execPath: "C:\\bin\\doctor.cmd",
 			runner,
 			fs,
 			environment: fixedEnv({ platform: "win32", home: "C:\\Users\\t" }),
@@ -162,7 +162,7 @@ describe("install - writes the unit file then runs the manager argv", () => {
 		// this failure mode is diagnosable from the CLI's own output alone.
 		expect(result.message).toContain("incorrectly formatted or out of range");
 		// The staged XML (now with PT1M) is still laid down for inspection.
-		const staged = "C:\\Users\\t/.honeycomb/hivedoctor/hivedoctor-task.xml";
+		const staged = "C:\\Users\\t/.honeycomb/doctor/doctor-task.xml";
 		expect(fs.files.get(staged)).toContain("<Interval>PT1M</Interval>");
 	});
 
@@ -170,7 +170,7 @@ describe("install - writes the unit file then runs the manager argv", () => {
 		const longLine = "x".repeat(500);
 		const runner = createRecordingRunner(() => ({ ok: false, code: 1, stdout: "", stderr: longLine }));
 		const module = createServiceModule({
-			execPath: "/usr/bin/hivedoctor",
+			execPath: "/usr/bin/doctor",
 			runner,
 			fs: createMemoryFs(),
 			environment: fixedEnv({ platform: "linux" }),
@@ -201,7 +201,7 @@ describe("uninstall - deregisters then removes the unit file (AC-064b.5)", () =>
 		const unitPath = "/home/t/.config/systemd/user/doctor.service";
 		fs.files.set(unitPath, "stale unit");
 		const module = createServiceModule({
-			execPath: "/usr/bin/hivedoctor",
+			execPath: "/usr/bin/doctor",
 			runner,
 			fs,
 			environment: fixedEnv({ platform: "linux", home: "/home/t" }),
@@ -223,7 +223,7 @@ describe("uninstall - deregisters then removes the unit file (AC-064b.5)", () =>
 		const runner = createRecordingRunner();
 		const fs = createMemoryFs();
 		const module = createServiceModule({
-			execPath: "C:\\bin\\hivedoctor.cmd",
+			execPath: "C:\\bin\\doctor.cmd",
 			runner,
 			fs,
 			environment: fixedEnv({ platform: "win32", home: "C:\\Users\\t" }),
@@ -232,7 +232,7 @@ describe("uninstall - deregisters then removes the unit file (AC-064b.5)", () =>
 		await module.uninstall();
 
 		expect(runner.calls[0]).toEqual({ command: "schtasks", args: ["/Delete", "/TN", "doctor", "/F"] });
-		expect(fs.removed).toContain("C:\\Users\\t/.honeycomb/hivedoctor/hivedoctor-task.xml");
+		expect(fs.removed).toContain("C:\\Users\\t/.honeycomb/doctor/doctor-task.xml");
 	});
 
 	it("a missing unit during uninstall is tolerated (idempotent), still reports cleanly", async () => {
@@ -240,7 +240,7 @@ describe("uninstall - deregisters then removes the unit file (AC-064b.5)", () =>
 		const runner = createRecordingRunner(() => ({ ok: false, code: 1, stdout: "", stderr: "not loaded" }));
 		const fs = createMemoryFs();
 		const module = createServiceModule({
-			execPath: "/usr/bin/hivedoctor",
+			execPath: "/usr/bin/doctor",
 			runner,
 			fs,
 			environment: fixedEnv({ platform: "linux" }),
@@ -256,7 +256,7 @@ describe("serviceStatus classification", () => {
 	it("systemd is-active 'active' -> running", async () => {
 		const runner = createRecordingRunner(() => ({ ok: true, code: 0, stdout: "active\n", stderr: "" }));
 		const status = await serviceStatus({
-			execPath: "/usr/bin/hivedoctor",
+			execPath: "/usr/bin/doctor",
 			runner,
 			environment: fixedEnv({ platform: "linux" }),
 		});
@@ -266,7 +266,7 @@ describe("serviceStatus classification", () => {
 	it("systemd is-active non-zero (inactive) -> not-running", async () => {
 		const runner = createRecordingRunner(() => ({ ok: false, code: 3, stdout: "inactive\n", stderr: "" }));
 		const status = await serviceStatus({
-			execPath: "/usr/bin/hivedoctor",
+			execPath: "/usr/bin/doctor",
 			runner,
 			environment: fixedEnv({ platform: "linux" }),
 		});
@@ -276,7 +276,7 @@ describe("serviceStatus classification", () => {
 	it("a spawn error (manager binary missing) -> unknown", async () => {
 		const runner = createRecordingRunner(() => ({ ok: false, code: null, stdout: "", stderr: "", detail: "ENOENT" }));
 		const status = await serviceStatus({
-			execPath: "/usr/bin/hivedoctor",
+			execPath: "/usr/bin/doctor",
 			runner,
 			environment: fixedEnv({ platform: "linux" }),
 		});
@@ -286,7 +286,7 @@ describe("serviceStatus classification", () => {
 	it("schtasks query ok -> running", async () => {
 		const runner = createRecordingRunner(() => ({ ok: true, code: 0, stdout: "TaskName Running", stderr: "" }));
 		const status = await serviceStatus({
-			execPath: "C:\\bin\\hivedoctor.cmd",
+			execPath: "C:\\bin\\doctor.cmd",
 			runner,
 			environment: fixedEnv({ platform: "win32" }),
 		});

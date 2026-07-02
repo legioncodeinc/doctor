@@ -1,7 +1,7 @@
 /**
  * Composition-root smoke test (PRD-064f production assembly).
  *
- * Asserts that createHiveDoctor() wires the whole watchdog together:
+ * Asserts that createDoctor() wires the whole watchdog together:
  *   - the remediation ladder has rungs 1/2/3 REGISTERED (not just slots);
  *   - the escalation hook is wired (ladder.escalate runs the give-up hand-off);
  *   - the auto-update poll loop respects the resolved opt-out precedence;
@@ -18,7 +18,7 @@ import { join } from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { createHiveDoctor, createRealClock } from "../../src/compose/index.js";
+import { createDoctor, createRealClock } from "../../src/compose/index.js";
 import { resolveConfig } from "../../src/config.js";
 import { silentLogger } from "../../src/logger.js";
 import type { SupervisorClock } from "../../src/supervisor.js";
@@ -66,10 +66,10 @@ function fakeUpdateEngine(): { engine: UpdateEngine; runs: () => number } {
 	};
 }
 
-/** Build a HiveDoctor over fakes; status page on port 0 (OS-assigned). */
-function buildDoctor(over: Partial<Parameters<typeof createHiveDoctor>[0]> = {}) {
+/** Build a Doctor over fakes; status page on port 0 (OS-assigned). */
+function buildDoctor(over: Partial<Parameters<typeof createDoctor>[0]> = {}) {
 	const config = { ...resolveConfig({}), workspaceDir: makeTmp() };
-	return createHiveDoctor({
+	return createDoctor({
 		config,
 		env: {},
 		logger: silentLogger,
@@ -81,7 +81,7 @@ function buildDoctor(over: Partial<Parameters<typeof createHiveDoctor>[0]> = {})
 	});
 }
 
-async function statusJsonUrl(doctor: ReturnType<typeof createHiveDoctor>): Promise<string> {
+async function statusJsonUrl(doctor: ReturnType<typeof createDoctor>): Promise<string> {
 	for (let i = 0; i < 50; i += 1) {
 		const port = doctor.statusPage.listeningPort;
 		if (port !== undefined) return `http://127.0.0.1:${port}/status.json`;
@@ -92,12 +92,12 @@ async function statusJsonUrl(doctor: ReturnType<typeof createHiveDoctor>): Promi
 
 const tmpDirs: string[] = [];
 function makeTmp(): string {
-	const d = mkdtempSync(join(tmpdir(), "hivedoctor-compose-"));
+	const d = mkdtempSync(join(tmpdir(), "doctor-compose-"));
 	tmpDirs.push(d);
 	return d;
 }
 
-describe("createHiveDoctor (composition root)", () => {
+describe("createDoctor (composition root)", () => {
 	afterEach(() => {
 		for (const d of tmpDirs.splice(0)) rmSync(d, { recursive: true, force: true });
 	});
@@ -191,9 +191,9 @@ describe("createHiveDoctor (composition root)", () => {
 	// ── PRD-004d "Failure handling": a malformed registry must not wedge the watchdog ──────────
 	// A shared builder that drives resolveDaemons over a real on-disk registry file at a known
 	// workspaceDir (so the needs-attention.json surface can be read back).
-	function buildWithRegistry(registryPath: string): { doctor: ReturnType<typeof createHiveDoctor>; workspaceDir: string } {
+	function buildWithRegistry(registryPath: string): { doctor: ReturnType<typeof createDoctor>; workspaceDir: string } {
 		const workspaceDir = makeTmp();
-		const doctor = createHiveDoctor({
+		const doctor = createDoctor({
 			config: { ...resolveConfig({}), workspaceDir },
 			env: {},
 			logger: silentLogger,
@@ -207,7 +207,7 @@ describe("createHiveDoctor (composition root)", () => {
 	}
 
 	it("a MALFORMED registry does not crash boot: falls back to honeycomb + records needs-attention", async () => {
-		const registryPath = join(makeTmp(), "hivedoctor.daemons.json");
+		const registryPath = join(makeTmp(), "doctor.daemons.json");
 		writeFileSync(registryPath, "{ this is not valid json", "utf8");
 
 		// The crux: construction must NOT throw (throwing would crash-loop under the service unit).
@@ -243,14 +243,14 @@ describe("createHiveDoctor (composition root)", () => {
 	});
 
 	it("a VALID registry spawns one supervisor per entry with no registry problem (a-AC-1)", async () => {
-		const registryPath = join(makeTmp(), "hivedoctor.daemons.json");
+		const registryPath = join(makeTmp(), "doctor.daemons.json");
 		writeFileSync(
 			registryPath,
 			JSON.stringify({
 				daemons: [
 					{ name: "honeycomb", healthUrl: "http://127.0.0.1:3850/health", pidPath: "~/.honeycomb/daemon.pid" },
-					{ name: "thehive", healthUrl: "http://127.0.0.1:3853/health", pidPath: "~/.honeycomb/thehive.pid" },
-					{ name: "hivenectar", healthUrl: "http://127.0.0.1:3854/health", pidPath: "~/.honeycomb/hivenectar.pid" },
+					{ name: "hive", healthUrl: "http://127.0.0.1:3853/health", pidPath: "~/.honeycomb/hive.pid" },
+					{ name: "nectar", healthUrl: "http://127.0.0.1:3854/health", pidPath: "~/.honeycomb/nectar.pid" },
 				],
 			}),
 			"utf8",
@@ -427,7 +427,7 @@ function manualClock(): SupervisorClock & { tickAll(): Promise<void>; releaseAll
 /** A fast daemon-version read so the install-health snapshot never touches the network. */
 const fastDaemonVersion = async (): Promise<string | null> => "0.1.9";
 
-describe("createHiveDoctor telemetry wiring (PRD-064d)", () => {
+describe("createDoctor telemetry wiring (PRD-064d)", () => {
 	afterEach(() => {
 		for (const d of tmpDirs.splice(0)) rmSync(d, { recursive: true, force: true });
 	});
@@ -438,7 +438,7 @@ describe("createHiveDoctor telemetry wiring (PRD-064d)", () => {
 		const fn = (async (input: Record<string, unknown>) => {
 			calls.push(input);
 			return { sent: true };
-		}) as unknown as NonNullable<Parameters<typeof createHiveDoctor>[0]>["emitInstallHealthFn"];
+		}) as unknown as NonNullable<Parameters<typeof createDoctor>[0]>["emitInstallHealthFn"];
 		return { calls, fn };
 	}
 
@@ -457,7 +457,7 @@ describe("createHiveDoctor telemetry wiring (PRD-064d)", () => {
 		expect(first?.["deviceId"]).not.toBe("");
 		expect(first?.["deviceId"]).not.toBe("unknown-device");
 		expect(first).toHaveProperty("lastKnownHealth");
-		expect(first?.["hivedoctorVersion"]).toBeDefined();
+		expect(first?.["doctorVersion"]).toBeDefined();
 		expect(first?.["daemonVersion"]).toBe("0.1.9");
 		// Initiate stop (sets the stopped flag), then release the parked sleep so the loop
 		// observes the flag and exits; only then does stop's allSettled resolve.
@@ -518,7 +518,7 @@ describe("createHiveDoctor telemetry wiring (PRD-064d)", () => {
 		const emitErrorFn = (async (input: { errorClass: string }) => {
 			errorCalls.push(input);
 			return { sent: true };
-		}) as unknown as NonNullable<Parameters<typeof createHiveDoctor>[0]>["emitErrorFn"];
+		}) as unknown as NonNullable<Parameters<typeof createDoctor>[0]>["emitErrorFn"];
 
 		const clock = manualClock();
 		const doctor = buildDoctor({

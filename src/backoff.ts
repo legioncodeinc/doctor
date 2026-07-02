@@ -1,9 +1,9 @@
 /**
- * HiveDoctor geometric backoff (PRD-064a scope + technical considerations).
+ * Doctor geometric backoff (PRD-064a scope + technical considerations).
  *
  * "Geometric with jitter, floor 1s, ceiling 30s; persisted rung; reset on healthy"
  * (064a). Mirrors the bounded-backoff precedent in src/daemon/runtime/services/
- * embed-supervisor.ts (a fixed `restartBackoffMs` there; HiveDoctor generalizes it to
+ * embed-supervisor.ts (a fixed `restartBackoffMs` there; Doctor generalizes it to
  * a geometric schedule with jitter and a persisted rung so a reboot does not reset a
  * crash loop's memory - 064a technical considerations).
  *

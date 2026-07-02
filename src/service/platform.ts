@@ -1,7 +1,7 @@
 /**
  * Platform + scope resolution for the OS service manager (PRD-064b).
  *
- * HiveDoctor registers itself with the OS so it survives its own crash and a reboot
+ * Doctor registers itself with the OS so it survives its own crash and a reboot
  * (parent AC-1). WHICH service manager and at WHICH scope is decided here, once, from
  * three injected facts (the platform, the home dir, and whether the process is
  * privileged) so the rest of the service module is pure string + argv construction and
@@ -24,7 +24,7 @@
 
 import { homedir, userInfo } from "node:os";
 
-/** The OS families HiveDoctor knows how to register a service on. */
+/** The OS families Doctor knows how to register a service on. */
 export type ServicePlatform = "darwin" | "linux" | "win32";
 
 /** Which service manager backs a plan. */
@@ -64,7 +64,7 @@ export interface ServiceEnvironment {
 	readonly home: string;
 	/** True iff the process can install a system-scoped unit (root on POSIX, admin on Windows). */
 	readonly privileged: boolean;
-	/** The absolute path to the `hivedoctor` executable the unit will exec. */
+	/** The absolute path to the `doctor` executable the unit will exec. */
 	readonly execPath: string;
 	/**
 	 * Opt INTO system scope when privileged (enterprise path). Default false: even as root

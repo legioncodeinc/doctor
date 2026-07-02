@@ -13,7 +13,7 @@
  *      (Wave-0 state.json has no such field yet; it is read defensively so a later wave
  *      can add it without touching this resolver.)
  *
- * A pin (a version HiveDoctor must stay on) also disables forward auto-update; its source
+ * A pin (a version Doctor must stay on) also disables forward auto-update; its source
  * is the same env/state layering. A pin present at ANY layer disables forward motion
  * (AC-064e.4 "a pinned version that disables forward updates").
  *

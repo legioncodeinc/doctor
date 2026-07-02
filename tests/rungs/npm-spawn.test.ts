@@ -18,7 +18,7 @@ import { planNpmSpawn, resolveNpmCliJs } from "../../src/rungs/command-runner.js
 
 let dir: string;
 beforeEach(() => {
-	dir = mkdtempSync(join(tmpdir(), "hivedoctor-npm-spawn-"));
+	dir = mkdtempSync(join(tmpdir(), "doctor-npm-spawn-"));
 });
 afterEach(() => {
 	rmSync(dir, { recursive: true, force: true });

@@ -1,13 +1,13 @@
 /**
- * `self-update`: THE ONLY path that updates HiveDoctor's own package (PRD-064f AC-064f.5,
+ * `self-update`: THE ONLY path that updates Doctor's own package (PRD-064f AC-064f.5,
  * parent AC-6).
  *
  * "Never surprise-update itself" is sacred (PRD-064 design principle / parent AC-6):
- * HiveDoctor is built NOT to need updating, and no autonomous code path - not the watch
+ * Doctor is built NOT to need updating, and no autonomous code path - not the watch
  * loop, not rung 2, not the 064e auto-update engine - ever installs
  * `@legioncodeinc/doctor`. The auto-update engine's package is HARD-WIRED to the
- * PRIMARY daemon (`@legioncodeinc/honeycomb`); it cannot target HiveDoctor. This module is
- * the single, deliberate exception, reachable only by the explicit `hivedoctor self-update`
+ * PRIMARY daemon (`@legioncodeinc/honeycomb`); it cannot target Doctor. This module is
+ * the single, deliberate exception, reachable only by the explicit `doctor self-update`
  * command.
  *
  * It runs `npm i -g @legioncodeinc/doctor@latest` through the SAME injected
@@ -17,7 +17,7 @@
 
 import type { CommandRunner } from "../rungs/command-runner.js";
 import type { Logger } from "../logger.js";
-import { HIVEDOCTOR_PACKAGE } from "../version.js";
+import { DOCTOR_PACKAGE } from "../version.js";
 
 /** Construction deps for {@link createSelfUpdate}. */
 export interface SelfUpdateDeps {
@@ -42,7 +42,7 @@ const ACTION = "self-update";
 export function createSelfUpdate(deps: SelfUpdateDeps): () => Promise<string> {
 	const tag = deps.tag ?? "latest";
 	return async (): Promise<string> => {
-		const spec = `${HIVEDOCTOR_PACKAGE}@${tag}`;
+		const spec = `${DOCTOR_PACKAGE}@${tag}`;
 		deps.logger.info(`${ACTION}.start`, { spec });
 		const result = await deps.runner.run(
 			"npm",
@@ -51,9 +51,9 @@ export function createSelfUpdate(deps: SelfUpdateDeps): () => Promise<string> {
 		);
 		if (result.ok) {
 			deps.logger.info(`${ACTION}.ok`, { spec });
-			return `HiveDoctor updated (${spec}). Restart any running HiveDoctor process to pick it up.`;
+			return `Doctor updated (${spec}). Restart any running Doctor process to pick it up.`;
 		}
 		deps.logger.error(`${ACTION}.failed`, { code: result.code, detail: result.detail });
-		return `HiveDoctor self-update failed: ${result.detail ?? `npm exited ${result.code ?? "non-zero"}`}.`;
+		return `Doctor self-update failed: ${result.detail ?? `npm exited ${result.code ?? "non-zero"}`}.`;
 	};
 }

@@ -20,7 +20,7 @@
  *
  * ADDITIVE (lifecycle capture events): when the composition root supplies a
  * {@link LifecycleTelemetry} emitter, a SUCCESSFUL update outcome ("updated" /
- * "updated_unverified") ALSO fires the `hivedoctor_updated` PostHog CAPTURE event
+ * "updated_unverified") ALSO fires the `doctor_updated` PostHog CAPTURE event
  * ({@link file://../telemetry/capture.ts}), deduped per to_version via the state store.
  * The OTLP log emission above is untouched; the capture emit is a second, equally
  * fail-soft leg that can never affect the engine. No lifecycle injected = no capture
@@ -66,7 +66,7 @@ export type UpdateEmit = (event: UpdateTelemetryEvent) => Promise<void>;
  * `emitTelemetry` swallows all transport errors and never throws.
  *
  * Additive lifecycle leg: when `lifecycle` is supplied, a SUCCESSFUL update outcome
- * ("updated" / "updated_unverified") also fires the `hivedoctor_updated` capture event
+ * ("updated" / "updated_unverified") also fires the `doctor_updated` capture event
  * (deduped per to_version inside the lifecycle emitter). Rollbacks and failures fire NO
  * capture event. Absent `lifecycle` = the pre-existing OTLP-log-only behavior.
  */

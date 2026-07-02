@@ -1,5 +1,5 @@
 /**
- * self-update tests (PRD-064f AC-064f.5): the SOLE path that installs HiveDoctor's
+ * self-update tests (PRD-064f AC-064f.5): the SOLE path that installs Doctor's
  * own package, and only when explicitly invoked.
  */
 
@@ -7,7 +7,7 @@ import { describe, expect, it } from "vitest";
 
 import { createSelfUpdate } from "../../src/cli/self-update.js";
 import { silentLogger } from "../../src/logger.js";
-import { HIVEDOCTOR_PACKAGE } from "../../src/version.js";
+import { DOCTOR_PACKAGE } from "../../src/version.js";
 import type { CommandResult, CommandRunner } from "../../src/rungs/command-runner.js";
 
 /** A fake runner recording the exact argv it was asked to run. */
@@ -32,15 +32,15 @@ describe("createSelfUpdate", () => {
 
 		expect(r.calls).toHaveLength(1);
 		expect(r.calls[0]?.cmd).toBe("npm");
-		expect(r.calls[0]?.args).toEqual(["install", "-g", `${HIVEDOCTOR_PACKAGE}@latest`]);
-		expect(msg).toContain("HiveDoctor updated");
+		expect(r.calls[0]?.args).toEqual(["install", "-g", `${DOCTOR_PACKAGE}@latest`]);
+		expect(msg).toContain("Doctor updated");
 	});
 
-	it("targets the HiveDoctor package, never the primary daemon package", async () => {
+	it("targets the Doctor package, never the primary daemon package", async () => {
 		const r = recordingRunner({ ok: true, code: 0, stdout: "", stderr: "" });
 		await createSelfUpdate({ runner: r.runner, logger: silentLogger })();
 		const spec = r.calls[0]?.args[2] ?? "";
-		expect(spec.startsWith(HIVEDOCTOR_PACKAGE)).toBe(true);
+		expect(spec.startsWith(DOCTOR_PACKAGE)).toBe(true);
 		expect(spec).not.toContain("@legioncodeinc/honeycomb");
 	});
 
@@ -54,6 +54,6 @@ describe("createSelfUpdate", () => {
 	it("honors a custom tag", async () => {
 		const r = recordingRunner({ ok: true, code: 0, stdout: "", stderr: "" });
 		await createSelfUpdate({ runner: r.runner, logger: silentLogger, tag: "1.0.0" })();
-		expect(r.calls[0]?.args[2]).toBe(`${HIVEDOCTOR_PACKAGE}@1.0.0`);
+		expect(r.calls[0]?.args[2]).toBe(`${DOCTOR_PACKAGE}@1.0.0`);
 	});
 });

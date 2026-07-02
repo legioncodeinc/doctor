@@ -38,7 +38,7 @@ describe("supervisor escalate-on-give-up (PRD-064f wiring)", () => {
 	});
 
 	function workspace(): string {
-		const d = mkdtempSync(join(tmpdir(), "hivedoctor-escalate-"));
+		const d = mkdtempSync(join(tmpdir(), "doctor-escalate-"));
 		dirs.push(d);
 		return d;
 	}

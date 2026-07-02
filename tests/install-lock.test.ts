@@ -14,7 +14,7 @@ import { silentLogger } from "../src/logger.js";
 
 let dir: string;
 beforeEach(() => {
-	dir = mkdtempSync(join(tmpdir(), "hivedoctor-lock-"));
+	dir = mkdtempSync(join(tmpdir(), "doctor-lock-"));
 });
 afterEach(() => {
 	rmSync(dir, { recursive: true, force: true });

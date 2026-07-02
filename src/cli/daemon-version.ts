@@ -2,8 +2,8 @@
  * Read the primary daemon's reported version from `/health` (PRD-064f, `status` command).
  *
  * The daemon's `/health` body carries `{ status, version, ... }` (src/daemon/runtime/
- * server.ts). HiveDoctor reads that `version` field so `status` can show the daemon's
- * running version alongside HiveDoctor's own. It is ALSO the `readInstalledVersion` seam
+ * server.ts). Doctor reads that `version` field so `status` can show the daemon's
+ * running version alongside Doctor's own. It is ALSO the `readInstalledVersion` seam
  * rung 2 / the auto-update engine consult to verify an install took.
  *
  * Built-ins ONLY: node:http, no fetch wrapper (mirrors src/health-probe.ts). NEVER throws:

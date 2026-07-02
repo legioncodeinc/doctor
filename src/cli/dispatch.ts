@@ -23,7 +23,7 @@
 import { parseArgs, hasFlag, type ParsedArgs } from "./arg-parse.js";
 import { renderBannerWithMenu } from "./banner.js";
 import { resolveCommand, type CommandName } from "./command-table.js";
-import { HIVEDOCTOR_VERSION } from "../version.js";
+import { DOCTOR_VERSION } from "../version.js";
 import type { CliContext } from "./context.js";
 import { SERVICE_NOT_AVAILABLE } from "./service-stub.js";
 import type { HealthClassification } from "../health-probe.js";
@@ -64,9 +64,9 @@ async function runStatus(ctx: CliContext): Promise<number> {
 	// The sync serviceState() seam is the test-harness fallback when the async probe is not injected.
 	const serviceState = deps.serviceStateAsync !== undefined ? await deps.serviceStateAsync() : deps.serviceState();
 
-	io.out(colors.bold("HiveDoctor status"));
-	io.out(`  HiveDoctor service: ${colors.cyan(serviceState)}`);
-	io.out(`  HiveDoctor version: ${deps.hivedoctorVersion}`);
+	io.out(colors.bold("Doctor status"));
+	io.out(`  Doctor service: ${colors.cyan(serviceState)}`);
+	io.out(`  Doctor version: ${deps.doctorVersion}`);
 	for (const daemon of daemonSources) {
 		let classification: HealthClassification = { kind: "unreachable-timeout" };
 		try {
@@ -116,7 +116,7 @@ async function runDiagnose(ctx: CliContext): Promise<number> {
 	const { io, colors, deps } = ctx;
 	const classification = await deps.probe();
 
-	io.out(colors.bold("HiveDoctor diagnosis"));
+	io.out(colors.bold("Doctor diagnosis"));
 	io.out(`  Health: ${colors.cyan(healthLabel(classification))}`);
 
 	if (!isUnhealthy(classification)) {
@@ -132,7 +132,7 @@ async function runDiagnose(ctx: CliContext): Promise<number> {
 		? `rung ${decision.rung} (escalated after ${failures} failed restarts)`
 		: `rung ${decision.rung}`;
 	io.out(`  Recommended fix: ${colors.yellow(rungLabel)}`);
-	io.out(colors.dim("  (diagnose takes no action - run `hivedoctor heal` to apply the ladder.)"));
+	io.out(colors.dim("  (diagnose takes no action - run `doctor heal` to apply the ladder.)"));
 	return EXIT_OK;
 }
 
@@ -206,7 +206,7 @@ async function runUpdate(ctx: CliContext, parsed: ParsedArgs): Promise<number> {
 	return EXIT_OK;
 }
 
-/** `self-update` (AC-064f.5): THE ONLY path that updates HiveDoctor's own package. */
+/** `self-update` (AC-064f.5): THE ONLY path that updates Doctor's own package. */
 async function runSelfUpdate(ctx: CliContext): Promise<number> {
 	ctx.io.out(await ctx.deps.update.selfUpdate());
 	return EXIT_OK;
@@ -218,9 +218,9 @@ async function runSelfUpdate(ctx: CliContext): Promise<number> {
  * {@link EXIT_ERROR} so callers (the installers) see an honest non-zero exit (IRD-192 AC-6).
  *
  * Lifecycle capture events (additive, both legs gated + fail-soft inside the emitter):
- *   - `hivedoctor_uninstalled` fires BEFORE the uninstall's state teardown, fire-and-forget
+ *   - `doctor_uninstalled` fires BEFORE the uninstall's state teardown, fire-and-forget
  *     (never awaited, so it can never block or fail the uninstall).
- *   - `hivedoctor_installed` fires AFTER the install verb completes successfully; awaited
+ *   - `doctor_installed` fires AFTER the install verb completes successfully; awaited
  *     (bounded 2s, never throws) so the once-per-machine dedupe marker persists before exit.
  */
 async function runService(ctx: CliContext, kind: "install" | "uninstall"): Promise<number> {
@@ -325,9 +325,9 @@ export async function dispatch(argv: readonly string[], ctx: CliContext): Promis
 	const command = resolveCommand(parsed.command);
 
 	// `--version` / `-v` / `-V` -> print just the version string and exit, BEFORE the
-	// bare-invocation banner fallback (otherwise `hivedoctor --version` shows the banner).
+	// bare-invocation banner fallback (otherwise `doctor --version` shows the banner).
 	if (hasFlag(parsed, "version") || argv.includes("-v") || argv.includes("-V")) {
-		ctx.io.out(HIVEDOCTOR_VERSION);
+		ctx.io.out(DOCTOR_VERSION);
 		return EXIT_OK;
 	}
 

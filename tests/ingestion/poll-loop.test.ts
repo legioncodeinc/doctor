@@ -36,7 +36,7 @@ import { openTelemetryDb } from "../../src/telemetry/sqlite-reader.js";
 
 const tmpDirs: string[] = [];
 function makeTmp(): string {
-	const d = mkdtempSync(join(tmpdir(), "hivedoctor-poll-loop-"));
+	const d = mkdtempSync(join(tmpdir(), "doctor-poll-loop-"));
 	tmpDirs.push(d);
 	return d;
 }
@@ -175,22 +175,22 @@ describe("poll-loop (PRD-001c)", () => {
 	});
 
 	it("001a-AC-2/001-AC-2: an entry with no telemetryDbPath is health-probe-only (no SQLite ingestion)", async () => {
-		const entry = daemon({ name: "thehive", healthUrl: "http://127.0.0.1:3853/health" });
+		const entry = daemon({ name: "hive", healthUrl: "http://127.0.0.1:3853/health" });
 		const clock = fakeClock();
 		const loop = trackedPollLoop({ entries: [entry], clock, logger: silentLogger, probe: async () => ok });
 
 		const event = await loop.tick();
 		expect(event.services).toEqual([
-			{ name: "thehive", health: "ok", lastSeen: null, metrics: {}, deeplake: null, telemetryFault: null },
+			{ name: "hive", health: "ok", lastSeen: null, metrics: {}, deeplake: null, telemetryFault: null },
 		]);
 	});
 
 	it("Contract C: a registered-but-silent service (no status row yet) reports health 'unknown'", async () => {
 		const dir = makeTmp();
-		const dbPath = join(dir, "hivenectar.sqlite");
+		const dbPath = join(dir, "nectar.sqlite");
 		buildFixtureDb(dbPath).close();
 
-		const entry = daemon({ name: "hivenectar", healthUrl: "http://127.0.0.1:3854/health", telemetryDbPath: dbPath });
+		const entry = daemon({ name: "nectar", healthUrl: "http://127.0.0.1:3854/health", telemetryDbPath: dbPath });
 		const loop = trackedPollLoop({ entries: [entry], clock: fakeClock(), logger: silentLogger, probe: async () => ok });
 
 		const event = await loop.tick();
@@ -250,7 +250,7 @@ describe("poll-loop (PRD-001c)", () => {
 		fixture.close();
 
 		const brokenEntry = daemon({
-			name: "hivenectar",
+			name: "nectar",
 			healthUrl: "http://127.0.0.1:3854/health",
 			telemetryDbPath: join(dir, "does-not-exist.sqlite"),
 		});
@@ -259,7 +259,7 @@ describe("poll-loop (PRD-001c)", () => {
 		const loop = trackedPollLoop({ entries: [brokenEntry, healthyEntry], clock, logger: silentLogger, probe: async () => ok });
 
 		const event = await loop.tick();
-		const broken = event.services.find((s) => s.name === "hivenectar");
+		const broken = event.services.find((s) => s.name === "nectar");
 		const healthy = event.services.find((s) => s.name === "honeycomb");
 		expect(broken?.telemetryFault).toBe("missing");
 		// A broken /health-ok service degrades to "degraded" (fault flagged) rather than
@@ -274,7 +274,7 @@ describe("poll-loop (PRD-001c)", () => {
 		const malformedPath = join(dir, "garbage.sqlite");
 		writeFileSync(malformedPath, "this is not a sqlite file at all", "utf8");
 
-		const entry = daemon({ name: "hivenectar", healthUrl: "http://127.0.0.1:3854/health", telemetryDbPath: malformedPath });
+		const entry = daemon({ name: "nectar", healthUrl: "http://127.0.0.1:3854/health", telemetryDbPath: malformedPath });
 		const loop = trackedPollLoop({ entries: [entry], clock: fakeClock(), logger: silentLogger, probe: async () => ok });
 
 		const event = await loop.tick();
@@ -286,8 +286,8 @@ describe("poll-loop (PRD-001c)", () => {
 		const dir = makeTmp();
 		const dbPath = join(dir, "impostor.sqlite");
 		const fixture = buildFixtureDb(dbPath);
-		// The DB self-identifies as "thehive" but the registry entry points "honeycomb" at it.
-		upsertStatus(fixture, { name: "thehive", bindingTime: "2026-07-01T00:00:00.000Z", lastSeen: "2026-07-01T00:00:00.000Z", health: "ok" });
+		// The DB self-identifies as "hive" but the registry entry points "honeycomb" at it.
+		upsertStatus(fixture, { name: "hive", bindingTime: "2026-07-01T00:00:00.000Z", lastSeen: "2026-07-01T00:00:00.000Z", health: "ok" });
 		upsertMetrics(fixture, { actionsTaken: 9, filesProcessed: 9, memoriesCreated: 9 }, "2026-07-01T00:00:00.000Z");
 		insertLog(fixture, "2026-07-01T00:00:00.000Z", "info", "must-not-leak");
 		fixture.close();
@@ -492,22 +492,22 @@ describe("openTelemetryDb (PRD-001b reader side, used by the poll loop)", () => 
 
 	it("002b-AC-1: readMetrics() is schema-tolerant -- forwards whatever counters exist, camelCased, excluding id/updated_at", () => {
 		const dir = makeTmp();
-		const dbPath = join(dir, "hivenectar.sqlite");
+		const dbPath = join(dir, "nectar.sqlite");
 		const db = new DatabaseSync(dbPath);
-		// hivenectar's own 5-counter variant (Contract B), never hardcoded in the reader.
+		// nectar's own 5-counter variant (Contract B), never hardcoded in the reader.
 		db.exec(`
 			CREATE TABLE service_metrics (
 				id INTEGER PRIMARY KEY CHECK (id = 1),
 				files_registered INTEGER NOT NULL DEFAULT 0,
 				nectars_minted INTEGER NOT NULL DEFAULT 0,
 				descriptions_generated INTEGER NOT NULL DEFAULT 0,
-				source_graph_versions INTEGER NOT NULL DEFAULT 0,
+				hive_graph_versions INTEGER NOT NULL DEFAULT 0,
 				embeddings_computed INTEGER NOT NULL DEFAULT 0,
 				updated_at TEXT NOT NULL
 			);
 		`);
 		db.prepare(
-			"INSERT INTO service_metrics (id, files_registered, nectars_minted, descriptions_generated, source_graph_versions, embeddings_computed, updated_at) VALUES (1, ?, ?, ?, ?, ?, ?)",
+			"INSERT INTO service_metrics (id, files_registered, nectars_minted, descriptions_generated, hive_graph_versions, embeddings_computed, updated_at) VALUES (1, ?, ?, ?, ?, ?, ?)",
 		).run(7, 2, 9, 1, 4, "2026-07-01T00:00:00.000Z");
 		db.close();
 
@@ -517,7 +517,7 @@ describe("openTelemetryDb (PRD-001b reader side, used by the poll loop)", () => 
 				filesRegistered: 7,
 				nectarsMinted: 2,
 				descriptionsGenerated: 9,
-				sourceGraphVersions: 1,
+				hiveGraphVersions: 1,
 				embeddingsComputed: 4,
 			});
 		} finally {

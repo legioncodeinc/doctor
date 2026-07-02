@@ -85,7 +85,7 @@ export function fixedEnv(overrides: Partial<ServiceEnvironment> & Pick<ServiceEn
 		platform: overrides.platform,
 		home: overrides.home ?? "/home/tester",
 		privileged: overrides.privileged ?? false,
-		execPath: overrides.execPath ?? "/usr/local/bin/hivedoctor",
+		execPath: overrides.execPath ?? "/usr/local/bin/doctor",
 		...(overrides.preferSystemScope !== undefined ? { preferSystemScope: overrides.preferSystemScope } : {}),
 	};
 }

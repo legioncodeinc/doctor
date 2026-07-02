@@ -1,10 +1,10 @@
 /**
- * The hivedoctor -> the-hive SSE producer (hivedoctor PRD-002a; ADR-0001 decision 3).
+ * The doctor -> hive SSE producer (doctor PRD-002a; ADR-0001 decision 3).
  *
- * Exactly ONE stream, hivedoctor to the-hive, served at `GET /events` on the EXISTING
+ * Exactly ONE stream, doctor to hive, served at `GET /events` on the EXISTING
  * loopback status page (`../status-page/server.js`, `:3852`), alongside `/` and
  * `/status.json` (PRD-002a implementation note: "reuse the loopback server rather than
- * adding a new listener"). There is no service-to-hivedoctor stream and no other
+ * adding a new listener"). There is no service-to-doctor stream and no other
  * streaming surface (ADR-0001 decision 3, a-AC-1). One event type, `fleet-telemetry`,
  * carrying the in-memory model the poll loop (`./poll-loop.js`) maintains (Contract C).
  * This module never re-opens SQLite itself; it only forwards the loop's snapshots.

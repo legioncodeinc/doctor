@@ -49,7 +49,7 @@ export interface UpdateActions {
 	/** Apply the primary-daemon update through the blessed gate (`update`). */
 	applyPrimaryUpdate(): Promise<string>;
 	/**
-	 * The ONE path that updates HiveDoctor's own package (`self-update`, AC-064f.5).
+	 * The ONE path that updates Doctor's own package (`self-update`, AC-064f.5).
 	 * Implemented in {@link file://./self-update.ts}; injected so tests assert it is the
 	 * only command that ever calls it.
 	 */
@@ -63,7 +63,7 @@ export type TailIncidentsFn = (limit: number, daemonName?: string) => Promise<re
 export interface StatusStateSnapshot {
 	/** The last confirmed heal time (ISO-8601), or null. */
 	readonly lastHealAt: string | null;
-	/** The last coarse daemon health HiveDoctor recorded. */
+	/** The last coarse daemon health Doctor recorded. */
 	readonly lastKnownHealth: string;
 }
 
@@ -78,7 +78,7 @@ export interface StatusDaemonSource {
 	readonly readStatusState: ReadStatusStateFn;
 }
 
-/** Coarse HiveDoctor service state for `status` (064b owns the real registration). */
+/** Coarse Doctor service state for `status` (064b owns the real registration). */
 export type ServiceState = "running" | "not-running" | "unknown";
 
 /** The injected dependencies every command shares. */
@@ -89,8 +89,8 @@ export interface CliDeps {
 	readonly statusDaemons: () => readonly StatusDaemonSource[];
 	/** Read the daemon's reported version from `/health`, or null when unreachable. */
 	readonly readDaemonVersion: ReadInstalledVersionFn;
-	/** HiveDoctor's own package version (single-sourced via src/version.ts). */
-	readonly hivedoctorVersion: string;
+	/** Doctor's own package version (single-sourced via src/version.ts). */
+	readonly doctorVersion: string;
 	/** The remediation ladder (decide + run rungs), shared with the watch loop. */
 	readonly ladder: RemediationLadder;
 	/** Build a rung context from a classification (logger comes from the dep wiring). */
@@ -102,7 +102,7 @@ export interface CliDeps {
 	/** Read the status-state snapshot (last heal, last-known health). */
 	readonly readStatusState: ReadStatusStateFn;
 	/**
-	 * Coarse HiveDoctor service state - the SYNC seam, retained for the test harness. The production
+	 * Coarse Doctor service state - the SYNC seam, retained for the test harness. The production
 	 * wiring injects the ASYNC {@link serviceStateAsync} instead; `runStatus` only falls back to this
 	 * when the async probe is absent.
 	 */
@@ -127,8 +127,8 @@ export interface CliDeps {
 	 */
 	readonly serviceModule?: ServiceModule;
 	/**
-	 * The lifecycle capture-event emitter (PostHog `hivedoctor_installed` /
-	 * `hivedoctor_uninstalled`), when wired in. Every method is gated + fail-soft and never
+	 * The lifecycle capture-event emitter (PostHog `doctor_installed` /
+	 * `doctor_uninstalled`), when wired in. Every method is gated + fail-soft and never
 	 * throws; the dispatcher fires it around the service verbs. Optional so the test harness
 	 * and any partial wiring stay valid (absent = no lifecycle events).
 	 */

@@ -1,9 +1,9 @@
 /**
- * HiveDoctor's shared device identity (PRD-064d / PRD-033 convergence).
+ * Doctor's shared device identity (PRD-064d / PRD-033 convergence).
  *
- * Every telemetry record HiveDoctor emits carries a `device_id` so installs can be
+ * Every telemetry record Doctor emits carries a `device_id` so installs can be
  * told apart on the PostHog side. The id MUST be the SAME stable per-machine UUID the
- * primary daemon already mints, so the daemon and HiveDoctor correlate to one install
+ * primary daemon already mints, so the daemon and Doctor correlate to one install
  * rather than two. The daemon persists it at `~/.honeycomb/device.json` in the shape
  * `{ device_id, label, createdAt }` (see src/daemon/runtime/assets/device.ts, PRD-033a).
  *
@@ -25,7 +25,7 @@ import { homedir, hostname } from "node:os";
 import { dirname, join } from "node:path";
 
 /**
- * The on-disk device record, byte-for-byte the daemon's shape (PRD-033a D-1). HiveDoctor
+ * The on-disk device record, byte-for-byte the daemon's shape (PRD-033a D-1). Doctor
  * writes the SAME three fields so the daemon's `loadOrCreateDevice` reads it back cleanly.
  */
 export interface DeviceRecord {

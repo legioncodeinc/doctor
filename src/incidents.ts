@@ -1,8 +1,8 @@
 /**
- * HiveDoctor incident-episode model + append-only, size-capped `incidents.ndjson`
+ * Doctor incident-episode model + append-only, size-capped `incidents.ndjson`
  * writer (PRD-064 data-model section; PRD-064a scope).
  *
- * An incident is one remediation EPISODE: the daemon went unhealthy, HiveDoctor ran
+ * An incident is one remediation EPISODE: the daemon went unhealthy, Doctor ran
  * an ordered set of remediation steps, and each step had an outcome. This is the
  * source the dashboard escalation report (064g) and the OTLP troubleshooting spans
  * (064d) will consume, so the shape is exported here and frozen as the contract
@@ -72,7 +72,7 @@ export interface Incident {
 
 /** Options for {@link createIncidentLog}. */
 export interface IncidentLogOptions {
-	/** HiveDoctor's workspace dir; the incident stream is written under it. */
+	/** Doctor's workspace dir; the incident stream is written under it. */
 	readonly workspaceDir: string;
 	/** Logger for defensive reporting of a failed write (never thrown). */
 	readonly logger: Logger;
@@ -83,7 +83,7 @@ export interface IncidentLogOptions {
 	/**
 	 * Optional per-daemon shard name (PRD-004a a-AC-6). When set, episodes are appended to
 	 * `incidents-<name>.ndjson` (rotated to `incidents-<name>.ndjson.1`) instead of the shared
-	 * `incidents.ndjson`, so `hivedoctor logs` (004b) can filter per daemon. Omitted for the
+	 * `incidents.ndjson`, so `doctor logs` (004b) can filter per daemon. Omitted for the
 	 * legacy single-daemon / process-global escalation log.
 	 */
 	readonly name?: string;

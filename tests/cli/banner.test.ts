@@ -20,7 +20,7 @@ describe("renderBanner", () => {
 	});
 
 	it("includes the single-sourced version", () => {
-		// In tests __HIVEDOCTOR_VERSION__ is undefined, so version falls to the dev sentinel.
+		// In tests __DOCTOR_VERSION__ is undefined, so version falls to the dev sentinel.
 		expect(renderBanner(plain)).toContain("v0.0.0-dev");
 	});
 });

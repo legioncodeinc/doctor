@@ -43,7 +43,7 @@ function recordingEmit(): { emit: UpdateEmit; events: UpdateTelemetryEvent[] } {
 
 let dir: string;
 beforeEach(() => {
-	dir = mkdtempSync(join(tmpdir(), "hivedoctor-update-"));
+	dir = mkdtempSync(join(tmpdir(), "doctor-update-"));
 });
 afterEach(() => {
 	rmSync(dir, { recursive: true, force: true });

@@ -1,7 +1,7 @@
 /**
- * HiveDoctor supervised-daemon registry (PRD-004a; extended by hivedoctor PRD-001a).
+ * Doctor supervised-daemon registry (PRD-004a; extended by doctor PRD-001a).
  *
- * hivedoctor no longer supervises a single hard-coded daemon: it reads a static JSON
+ * doctor no longer supervises a single hard-coded daemon: it reads a static JSON
  * registry file on boot and spawns one supervisor per listed daemon. This module owns
  * the registry file's schema and its DEFENSIVE parse.
  *
@@ -15,7 +15,7 @@
  * The registry file is an EXTERNAL input, so it is validated at this boundary. It is
  * hand-validated with node built-ins ONLY, mirroring the defensive-parse posture of
  * `src/config.ts` (PRD-004a a-AC-3) rather than reaching for a runtime schema library:
- * hivedoctor is a "can't-crash" watchdog with ZERO runtime dependencies by design
+ * doctor is a "can't-crash" watchdog with ZERO runtime dependencies by design
  * (design principle 1, documented in `src/config.ts` and `src/state.ts`), so zod is
  * deliberately not used here just as it is not used in `config.ts`/`state.ts`. The
  * parse is total: a missing OPTIONAL field on an otherwise-valid entry resolves to the
@@ -42,15 +42,15 @@ import { isAbsolute, join, resolve } from "node:path";
 import { DEFAULTS } from "./config.js";
 import { assertWithinBase } from "./safe-path.js";
 
-/** The three known workload daemons hivedoctor supervises. Names are parsed permissively (any filename-safe token) and narrowed against this list where useful. */
-export const KNOWN_DAEMON_NAMES = ["honeycomb", "thehive", "hivenectar"] as const;
+/** The three known workload daemons doctor supervises. Names are parsed permissively (any filename-safe token) and narrowed against this list where useful. */
+export const KNOWN_DAEMON_NAMES = ["honeycomb", "hive", "nectar"] as const;
 
 /** A known workload-daemon name. */
 export type KnownDaemonName = (typeof KNOWN_DAEMON_NAMES)[number];
 
 /**
  * One fully-resolved registry entry: the per-daemon supervision parameters that used to
- * live once on {@link import("./config.js").HiveDoctorConfig} for the single honeycomb
+ * live once on {@link import("./config.js").DoctorConfig} for the single honeycomb
  * daemon. `pidPath` has had any leading `~` expanded to the home directory.
  */
 export interface DaemonEntry {
@@ -66,13 +66,13 @@ export interface DaemonEntry {
 	readonly startupGraceMs: number;
 	/** Consecutive failed restarts before this daemon's ladder advances off rung 1. */
 	readonly restartGiveUpThreshold: number;
-	/** Cooldown after a restart hivedoctor performed for this daemon, in ms. */
+	/** Cooldown after a restart doctor performed for this daemon, in ms. */
 	readonly restartCooldownMs: number;
 	/**
 	 * Optional path to this service's runtime telemetry SQLite database (leading `~`
 	 * already expanded and the value resolved to a validated ABSOLUTE path; a relative
 	 * path is rejected at parse time). Absent means health-probe-only: no SQLite
-	 * ingestion for this entry (PRD-001a a-AC-2). hivedoctor only ever opens this database
+	 * ingestion for this entry (PRD-001a a-AC-2). doctor only ever opens this database
 	 * READ-ONLY (ADR-0001 decision 4, PRD-001b b-AC-3); it never creates or writes it.
 	 */
 	readonly telemetryDbPath?: string;
@@ -89,7 +89,7 @@ export interface LoadRegistryOptions {
 /**
  * Thrown when a PRESENT registry file is malformed. Fails loudly on purpose: an absent
  * file is a supported fallback (a-AC-2), but a broken file must not be silently treated
- * as "supervise nothing". hivedoctor's boot catches this at the top level and reports it.
+ * as "supervise nothing". doctor's boot catches this at the top level and reports it.
  */
 export class RegistryError extends Error {
 	constructor(message: string) {
@@ -103,7 +103,7 @@ const NAME_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9_-]*$/;
 
 /** The default registry file location, alongside the other `~/.honeycomb` artifacts. */
 export function defaultRegistryPath(home: string = homedir()): string {
-	return join(home, ".honeycomb", "hivedoctor.daemons.json");
+	return join(home, ".honeycomb", "doctor.daemons.json");
 }
 
 /**
@@ -141,7 +141,7 @@ function coerceNonNegativeInt(value: unknown, fallback: number): number {
 }
 
 /**
- * Trusted loopback hostnames a probed `healthUrl` may resolve to. Mirrors thehive's
+ * Trusted loopback hostnames a probed `healthUrl` may resolve to. Mirrors hive's
  * `isLoopbackBaseUrl` allow-list (`src/shared/daemon-routing.ts`) so both watchdog surfaces
  * share one loopback-trust model.
  */
@@ -152,12 +152,12 @@ const LOOPBACK_HOSTNAMES = new Set(["127.0.0.1", "localhost", "::1", "[::1]"]);
  * fall back to the default.
  *
  * SECURITY (SSRF, PRD-004a): the registry file is an EXTERNAL input written by installers.
- * hivedoctor FETCHES this URL every probe interval and reflects the daemon's reachability on
+ * doctor FETCHES this URL every probe interval and reflects the daemon's reachability on
  * the loopback status page. A tampered registry (or a malicious installer) with a NON-loopback
  * `healthUrl` would turn the watchdog into a server-side-request-forgery primitive: it would
  * fetch an attacker-controlled origin from the user's machine on a timer. Restricting the host
- * to loopback here is defense in depth, mirroring thehive's `isLoopbackBaseUrl` gate on its
- * daemon bases (thehive PRD-001 security fix). A non-loopback host silently falls back to the
+ * to loopback here is defense in depth, mirroring hive's `isLoopbackBaseUrl` gate on its
+ * daemon bases (hive PRD-001 security fix). A non-loopback host silently falls back to the
  * safe loopback default rather than ever probing it, matching this module's defensive posture.
  */
 function coerceHealthUrl(value: unknown, fallback: string): string {
@@ -188,7 +188,7 @@ function coercePidPath(value: unknown, home: string, fallback: string): string {
  * state (every legacy PRD-004a entry has no such field) rather than an error.
  *
  * SECURITY (arbitrary-file-read via a poisoned registry, security-review finding): a
- * registry entry with an unconstrained `telemetryDbPath` would let hivedoctor open ANY
+ * registry entry with an unconstrained `telemetryDbPath` would let doctor open ANY
  * user-readable SQLite file and, if it happens to carry Contract-B-shaped tables, poll
  * and forward its contents over the unauthenticated loopback SSE stream (`/events`).
  * Contract A pins telemetry databases under `~/.honeycomb/telemetry/`; this coercion

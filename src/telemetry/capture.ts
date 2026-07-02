@@ -1,5 +1,5 @@
 /**
- * HiveDoctor's lifecycle CAPTURE-EVENT emitter (PostHog events, not logs).
+ * Doctor's lifecycle CAPTURE-EVENT emitter (PostHog events, not logs).
  *
  * The existing 064d chokepoint ({@link file://./emit.ts}) posts OTLP LOGS to
  * `{host}/i/v1/logs`. Logs are not events: the operator's install/update funnel
@@ -8,9 +8,9 @@
  * module is that second, event-shaped egress path for exactly three lifecycle
  * moments:
  *
- *   - `hivedoctor_installed`   - the service-install verb completed (once per machine)
- *   - `hivedoctor_updated`     - the update engine landed a new primary version (once per to_version)
- *   - `hivedoctor_uninstalled` - the service-uninstall verb started (fire-and-forget)
+ *   - `doctor_installed`   - the service-install verb completed (once per machine)
+ *   - `doctor_updated`     - the update engine landed a new primary version (once per to_version)
+ *   - `doctor_uninstalled` - the service-uninstall verb started (fire-and-forget)
  *
  * ── Gates, in order (IDENTICAL to emit.ts so opt-out is one contract) ────────
  *   1. Empty key (un-keyed dev build / no env fallback)  -> hard-disabled.
@@ -32,9 +32,9 @@
  *
  * ── distinct_id ──────────────────────────────────────────────────────────────
  * Prefer the shared installer id at `~/.honeycomb/install-id` (written by the
- * honeycomb install script, PRD-002c) so hivedoctor's lifecycle correlates with
+ * honeycomb install script, PRD-002c) so doctor's lifecycle correlates with
  * the operator's install funnel. When the file is absent/empty, fall back to
- * hivedoctor's stable per-install device id (PRD-033 UUID).
+ * doctor's stable per-install device id (PRD-033 UUID).
  *
  * Built-ins only: node:os, node:fs, node:path (zero runtime deps).
  */
@@ -45,7 +45,7 @@ import { join } from "node:path";
 
 import { honeycombHomeDir, resolveDeviceId } from "../device-id.js";
 import type { StateStore } from "../state.js";
-import { HIVEDOCTOR_VERSION } from "../version.js";
+import { DOCTOR_VERSION } from "../version.js";
 import {
 	DEFAULT_EMIT_TIMEOUT_MS,
 	POSTHOG_HOST,
@@ -74,16 +74,16 @@ export function captureUrl(host: string = POSTHOG_HOST): string {
 // Event names + the closed property allow-list
 // ────────────────────────────────────────────────────────────────────────────
 
-/** The three lifecycle capture events hivedoctor may ever emit. */
-export type LifecycleEventName = "hivedoctor_installed" | "hivedoctor_updated" | "hivedoctor_uninstalled";
+/** The three lifecycle capture events doctor may ever emit. */
+export type LifecycleEventName = "doctor_installed" | "doctor_updated" | "doctor_uninstalled";
 
 /**
  * The CLOSED allow-list of capture property keys. The payload is built from
  * typed inputs ONLY ({@link buildCaptureProperties}); there is no free-form
  * property path, so nothing outside this list can ever leave the machine.
  *
- *   `package`      - always the literal "hivedoctor"
- *   `version`      - hivedoctor's own package version
+ *   `package`      - always the literal "doctor"
+ *   `version`      - doctor's own package version
  *   `os` / `arch` / `node` - coarse platform facts (never a hostname)
  *   `from_version` - the pre-update primary version (updated event only)
  *   `to_version`   - the post-update primary version (updated event only)
@@ -120,7 +120,7 @@ export function buildCaptureProperties(input: {
 	readonly outcome?: string;
 }): CaptureProperties {
 	const out: CaptureProperties = {
-		package: "hivedoctor",
+		package: "doctor",
 		version: input.version,
 		os: platform(),
 		arch: arch(),
@@ -157,8 +157,8 @@ export interface DistinctIdDeps {
 /**
  * Resolve the capture `distinct_id`. Prefer the shared installer id at
  * `~/.honeycomb/install-id` when the file exists and is non-empty (this is what
- * correlates hivedoctor's lifecycle with the operator install funnel); otherwise
- * fall back to hivedoctor's stable per-install device id (PRD-033 UUID). NEVER
+ * correlates doctor's lifecycle with the operator install funnel); otherwise
+ * fall back to doctor's stable per-install device id (PRD-033 UUID). NEVER
  * throws and ALWAYS returns a non-empty id.
  */
 export function resolveDistinctId(deps: DistinctIdDeps = {}): string {
@@ -275,12 +275,12 @@ export async function emitCaptureEvent(
 /** Construction deps for {@link createLifecycleTelemetry}. */
 export interface LifecycleTelemetryDeps {
 	/**
-	 * The existing hivedoctor state store carrying the dedupe markers
+	 * The existing doctor state store carrying the dedupe markers
 	 * (`installedEventReported` / `updatedEventReportedVersion`). Read/write are
 	 * both defensive (never throw) by the store's own contract.
 	 */
 	readonly stateStore: StateStore;
-	/** hivedoctor's own version stamped into every payload (default {@link HIVEDOCTOR_VERSION}). */
+	/** doctor's own version stamped into every payload (default {@link DOCTOR_VERSION}). */
 	readonly version?: string;
 	/** distinct_id seams (install-id file location + device-id fallback). */
 	readonly distinctId?: DistinctIdDeps;
@@ -291,16 +291,16 @@ export interface LifecycleTelemetryDeps {
 /** The lifecycle capture surface the CLI verbs + the update seam call. */
 export interface LifecycleTelemetry {
 	/**
-	 * Emit `hivedoctor_installed` ONCE per machine. A persisted marker in the state
+	 * Emit `doctor_installed` ONCE per machine. A persisted marker in the state
 	 * store means a re-install never re-fires. Resolves the outcome; never throws.
 	 */
 	installed(): Promise<CaptureOutcome>;
 	/**
-	 * Emit `hivedoctor_updated` for a successful update outcome, deduped per
+	 * Emit `doctor_updated` for a successful update outcome, deduped per
 	 * `toVersion` (the same target version never reports twice). Never throws.
 	 */
 	updated(fromVersion: string, toVersion: string, outcome: "updated" | "updated_unverified"): Promise<CaptureOutcome>;
-	/** Emit `hivedoctor_uninstalled` (no dedupe; fire-and-forget). Never throws. */
+	/** Emit `doctor_uninstalled` (no dedupe; fire-and-forget). Never throws. */
 	uninstalled(): Promise<CaptureOutcome>;
 }
 
@@ -311,7 +311,7 @@ export interface LifecycleTelemetry {
  * dropped send retries on the next trigger.
  */
 export function createLifecycleTelemetry(deps: LifecycleTelemetryDeps): LifecycleTelemetry {
-	const version = deps.version ?? HIVEDOCTOR_VERSION;
+	const version = deps.version ?? DOCTOR_VERSION;
 	const captureDeps = deps.capture ?? {};
 	const distinctId = (): string => resolveDistinctId(deps.distinctId);
 
@@ -323,7 +323,7 @@ export function createLifecycleTelemetry(deps: LifecycleTelemetryDeps): Lifecycl
 				const state = deps.stateStore.read();
 				if (state.installedEventReported === true) return { sent: false, skipped: "already_reported" };
 				const outcome = await emitCaptureEvent(
-					"hivedoctor_installed",
+					"doctor_installed",
 					buildCaptureProperties({ version }),
 					distinctId(),
 					captureDeps,
@@ -347,7 +347,7 @@ export function createLifecycleTelemetry(deps: LifecycleTelemetryDeps): Lifecycl
 				const state = deps.stateStore.read();
 				if (state.updatedEventReportedVersion === toVersion) return { sent: false, skipped: "already_reported" };
 				const result = await emitCaptureEvent(
-					"hivedoctor_updated",
+					"doctor_updated",
 					buildCaptureProperties({ version, fromVersion, toVersion, outcome }),
 					distinctId(),
 					captureDeps,
@@ -365,7 +365,7 @@ export function createLifecycleTelemetry(deps: LifecycleTelemetryDeps): Lifecycl
 				const gate = captureGate(captureDeps);
 				if (gate !== null) return { sent: false, skipped: gate };
 				return await emitCaptureEvent(
-					"hivedoctor_uninstalled",
+					"doctor_uninstalled",
 					buildCaptureProperties({ version }),
 					distinctId(),
 					captureDeps,

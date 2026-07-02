@@ -43,7 +43,7 @@ import {
 } from "./platform.js";
 import { renderUnit } from "./templates.js";
 
-/** A coarse, classified service status (what `hivedoctor status` reports). */
+/** A coarse, classified service status (what `doctor status` reports). */
 export type ServiceStatus = "running" | "not-running" | "unknown";
 
 /** Per-command timeout for a service-manager shell-out (these are fast, local commands). */
@@ -77,7 +77,7 @@ export function createNodeServiceFs(): ServiceFs {
 
 /** Construction deps for {@link createServiceModule}. All have production defaults. */
 export interface ServiceModuleDeps {
-	/** The absolute path to the `hivedoctor` bin the unit execs. */
+	/** The absolute path to the `doctor` bin the unit execs. */
 	readonly execPath: string;
 	/** Opt into a system-scoped unit when privileged (enterprise path). Default false. */
 	readonly preferSystemScope?: boolean;
@@ -186,7 +186,7 @@ export function createServiceModule(deps: ServiceModuleDeps): ServiceModule {
 			} catch (error) {
 				return {
 					ok: false,
-					message: `Could not register HiveDoctor service: ${error instanceof Error ? error.message : "unknown error"}.`,
+					message: `Could not register Doctor service: ${error instanceof Error ? error.message : "unknown error"}.`,
 				};
 			}
 
@@ -210,15 +210,15 @@ export function createServiceModule(deps: ServiceModuleDeps): ServiceModule {
 			if (needsFile) {
 				try {
 					if (p.manager === "schtasks" && unitTarget === "") {
-						// Per-user task: stage the XML beside HiveDoctor's workspace so schtasks /XML can read it.
-						unitTarget = `${p.home}/.honeycomb/hivedoctor/hivedoctor-task.xml`;
+						// Per-user task: stage the XML beside Doctor's workspace so schtasks /XML can read it.
+						unitTarget = `${p.home}/.honeycomb/doctor/doctor-task.xml`;
 					}
 					fs.mkdirp(dirname(unitTarget));
 					fs.writeFile(unitTarget, renderUnit(p));
 				} catch (error) {
 					return {
 						ok: false,
-						message: `Could not write the HiveDoctor unit file at ${unitTarget}: ${error instanceof Error ? error.message : "unknown error"}.`,
+						message: `Could not write the Doctor unit file at ${unitTarget}: ${error instanceof Error ? error.message : "unknown error"}.`,
 					};
 				}
 			}
@@ -233,14 +233,14 @@ export function createServiceModule(deps: ServiceModuleDeps): ServiceModule {
 				logger.warn("service.install_command_failed", { command: firstFailure?.command, detail });
 				return {
 					ok: false,
-					message: `Registered the HiveDoctor unit but a service-manager command failed (${firstFailure?.command ?? "unknown"}): ${detail}. It will start at next login/boot; run \`hivedoctor status\` to check.`,
+					message: `Registered the Doctor unit but a service-manager command failed (${firstFailure?.command ?? "unknown"}): ${detail}. It will start at next login/boot; run \`doctor status\` to check.`,
 				};
 			}
 
 			logger.info("service.installed", { manager: p.manager, scope: p.scope });
 			return {
 				ok: true,
-				message: `HiveDoctor registered as a ${p.manager} service (${scopePhrase(p)}) and started. It will restart on crash and start on boot.`,
+				message: `Doctor registered as a ${p.manager} service (${scopePhrase(p)}) and started. It will restart on crash and start on boot.`,
 			};
 		},
 
@@ -251,7 +251,7 @@ export function createServiceModule(deps: ServiceModuleDeps): ServiceModule {
 			} catch (error) {
 				return {
 					ok: false,
-					message: `Could not unregister HiveDoctor service: ${error instanceof Error ? error.message : "unknown error"}.`,
+					message: `Could not unregister Doctor service: ${error instanceof Error ? error.message : "unknown error"}.`,
 				};
 			}
 
@@ -260,7 +260,7 @@ export function createServiceModule(deps: ServiceModuleDeps): ServiceModule {
 
 			// 2) Delete the unit file so it cannot resurrect on next boot (AC-064b.5). For schtasks the
 			//    staged XML lives beside the workspace; remove that too.
-			const stagedXml = p.manager === "schtasks" ? `${p.home}/.honeycomb/hivedoctor/hivedoctor-task.xml` : "";
+			const stagedXml = p.manager === "schtasks" ? `${p.home}/.honeycomb/doctor/doctor-task.xml` : "";
 			try {
 				if (p.unitPath !== "") fs.removeFile(p.unitPath);
 				if (stagedXml !== "") fs.removeFile(stagedXml);
@@ -275,20 +275,20 @@ export function createServiceModule(deps: ServiceModuleDeps): ServiceModule {
 				logger.warn("service.uninstall_command_failed", { command: firstFailure?.command, detail });
 				return {
 					ok: false,
-					message: `Removed the HiveDoctor unit file; a deregister command (${firstFailure?.command ?? "unknown"}) reported an error (often because it was already gone): ${detail}.`,
+					message: `Removed the Doctor unit file; a deregister command (${firstFailure?.command ?? "unknown"}) reported an error (often because it was already gone): ${detail}.`,
 				};
 			}
 			logger.info("service.uninstalled", { manager: p.manager, scope: p.scope });
 			return {
 				ok: true,
-				message: `HiveDoctor service unregistered (${p.manager}, ${scopePhrase(p)}). It will not start on next boot.`,
+				message: `Doctor service unregistered (${p.manager}, ${scopePhrase(p)}). It will not start on next boot.`,
 			};
 		},
 	};
 }
 
 /**
- * Probe the current service status (used by `hivedoctor status` once 064b is wired). Returns
+ * Probe the current service status (used by `doctor status` once 064b is wired). Returns
  * a coarse {@link ServiceStatus}; never throws. Exposed separately because the CLI's
  * `serviceState` dep reads status without the full install/uninstall surface.
  */

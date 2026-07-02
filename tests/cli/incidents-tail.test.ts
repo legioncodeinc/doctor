@@ -15,7 +15,7 @@ describe("createIncidentsTail", () => {
 	let dir: string;
 
 	beforeEach(() => {
-		dir = mkdtempSync(join(tmpdir(), "hivedoctor-logs-"));
+		dir = mkdtempSync(join(tmpdir(), "doctor-logs-"));
 	});
 	afterEach(() => {
 		rmSync(dir, { recursive: true, force: true });
@@ -44,19 +44,19 @@ describe("createIncidentsTail", () => {
 
 	it("b-AC-7: without a daemon filter, prefixes each line with its daemon name", async () => {
 		writeFileSync(join(dir, "incidents-honeycomb.ndjson"), '{"id":"h1","closedAt":"2026-07-01T00:00:00.000Z"}\n', "utf8");
-		writeFileSync(join(dir, "incidents-thehive.ndjson"), '{"id":"t1","closedAt":"2026-07-01T00:01:00.000Z"}\n', "utf8");
-		const lines = await createIncidentsTail(dir, ["honeycomb", "thehive"])(20);
+		writeFileSync(join(dir, "incidents-hive.ndjson"), '{"id":"t1","closedAt":"2026-07-01T00:01:00.000Z"}\n', "utf8");
+		const lines = await createIncidentsTail(dir, ["honeycomb", "hive"])(20);
 		expect(lines).toEqual([
 			'[honeycomb] {"id":"h1","closedAt":"2026-07-01T00:00:00.000Z"}',
-			'[thehive] {"id":"t1","closedAt":"2026-07-01T00:01:00.000Z"}',
+			'[hive] {"id":"t1","closedAt":"2026-07-01T00:01:00.000Z"}',
 		]);
 	});
 
 	it("security: rejects a --daemon name that is not in the registry (no wrong-path read)", async () => {
 		// An unregistered daemon name is invalid CLI input; it must be rejected loudly rather than
 		// interpolated into an out-of-registry filename or silently returning an empty list.
-		const tail = createIncidentsTail(dir, ["honeycomb", "thehive"]);
-		await expect(tail(20, "hivenectar")).rejects.toThrow(/unknown daemon "hivenectar"/);
+		const tail = createIncidentsTail(dir, ["honeycomb", "hive"]);
+		await expect(tail(20, "nectar")).rejects.toThrow(/unknown daemon "nectar"/);
 	});
 
 	it("security: rejects a path-traversal --daemon name rather than selecting a file", async () => {

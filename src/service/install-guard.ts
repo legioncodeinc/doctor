@@ -4,7 +4,7 @@
  * `--no-doctor` is the ONLY install-time switch. When it is passed (as a flag) OR set
  * via the env equivalent (`HONEYCOMB_NO_DOCTOR=1`), the bootstrap installer must NOT
  * install the `@legioncodeinc/doctor` package and must NOT register its OS service - so
- * NO HiveDoctor process ever runs (parent AC-10).
+ * NO Doctor process ever runs (parent AC-10).
  *
  * The pre-rename spellings (`--no-hivedoctor` / `HONEYCOMB_NO_HIVEDOCTOR`) stay accepted
  * as aliases: the flag shipped in public installer documentation before the July 2026
@@ -47,13 +47,13 @@ function isEnvOptOut(raw: string | undefined): boolean {
 }
 
 /**
- * Decide whether the HiveDoctor bootstrap (npm install + `hivedoctor install-service`) should
+ * Decide whether the Doctor bootstrap (npm install + `doctor install-service`) should
  * run. Returns `false` when the user opted out via the flag or the env equivalent (canonical
  * or pre-rename spelling); `true` (the default) otherwise. The env value is treated as opt-out
  * when it is "1" or "true" (case-insensitive), matching the daemon's other env-boolean
  * conventions.
  */
-export function shouldBootstrapHiveDoctor(input: InstallGuardInput): boolean {
+export function shouldBootstrapDoctor(input: InstallGuardInput): boolean {
 	// Flag form: `--no-doctor` (or the pre-rename `--no-hivedoctor`) anywhere in the argv.
 	if (input.argv.includes(NO_DOCTOR_FLAG)) return false;
 	if (input.argv.includes(NO_HIVEDOCTOR_FLAG)) return false;

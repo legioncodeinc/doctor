@@ -28,13 +28,13 @@ export interface ServiceResult {
 
 /** The 064b service module the composition root injects. Optional on {@link CliDeps}. */
 export interface ServiceModule {
-	/** Register HiveDoctor as an OS service. Returns a structured outcome for exit-code mapping. */
+	/** Register Doctor as an OS service. Returns a structured outcome for exit-code mapping. */
 	install(): Promise<ServiceResult>;
-	/** Unregister the HiveDoctor OS service. Returns a structured outcome for exit-code mapping. */
+	/** Unregister the Doctor OS service. Returns a structured outcome for exit-code mapping. */
 	uninstall(): Promise<ServiceResult>;
 }
 
 /** The honest message printed when 064b is not yet wired in. */
 export const SERVICE_NOT_AVAILABLE =
 	"Service registration is not yet available (PRD-064b). " +
-	"For now, HiveDoctor runs when you start it manually.";
+	"For now, Doctor runs when you start it manually.";

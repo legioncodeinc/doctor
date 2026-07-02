@@ -1,5 +1,5 @@
 /**
- * HiveDoctor health probe (PRD-064a scope + technical considerations).
+ * Doctor health probe (PRD-064a scope + technical considerations).
  *
  * Probes `GET http://127.0.0.1:3850/health` over node:http with a short timeout and
  * classifies the result into one of four kinds so the loop drives the RIGHT rung
@@ -91,7 +91,7 @@ function rawGet(healthUrl: string, timeoutMs: number): Promise<RawResponse> {
 
 		req.setTimeout(timeoutMs, () => {
 			// Tag the abort so the classifier maps it to `unreachable-timeout`, not refused.
-			req.destroy(Object.assign(new Error("probe_timeout"), { code: "HIVEDOCTOR_TIMEOUT" }));
+			req.destroy(Object.assign(new Error("probe_timeout"), { code: "DOCTOR_TIMEOUT" }));
 		});
 		req.on("error", (err) => finishErr(err instanceof Error ? err : new Error("request_error")));
 		req.end();
@@ -150,7 +150,7 @@ export async function probeHealth(options: ProbeOptions): Promise<HealthClassifi
 		return { kind: "degraded", reasons: parseReasons(res.body) };
 	} catch (error) {
 		const code = (error as { code?: unknown }).code;
-		if (code === "HIVEDOCTOR_TIMEOUT") return { kind: "unreachable-timeout" };
+		if (code === "DOCTOR_TIMEOUT") return { kind: "unreachable-timeout" };
 		// Connection refused/reset/DNS - the daemon is genuinely down.
 		const detail = error instanceof Error ? (typeof code === "string" ? code : error.message) : "unknown";
 		return { kind: "unreachable-refused", detail };

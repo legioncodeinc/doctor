@@ -22,11 +22,11 @@
 
 import { SERVICE_LABEL, WINDOWS_TASK_NAME, type ServicePlan } from "./platform.js";
 
-/** The command HiveDoctor's unit runs to start the supervised watchdog (no shell). */
-export const HIVEDOCTOR_RUN_COMMAND = "run" as const;
+/** The command Doctor's unit runs to start the supervised watchdog (no shell). */
+export const DOCTOR_RUN_COMMAND = "run" as const;
 
 /**
- * Seconds the OS waits before restarting a crashed HiveDoctor on POSIX. Used by the launchd
+ * Seconds the OS waits before restarting a crashed Doctor on POSIX. Used by the launchd
  * `ThrottleInterval` and the systemd `RestartSec` directives; both take seconds. AC-10: this value
  * MUST stay 5 for macOS/Linux and is NOT reused by the Windows template (see WINDOWS_RESTART_INTERVAL).
  */
@@ -80,7 +80,7 @@ export function renderLaunchdPlist(plan: ServicePlan): string {
 	<array>
 		<string>${node}</string>
 		<string>${exec}</string>
-		<string>${HIVEDOCTOR_RUN_COMMAND}</string>
+		<string>${DOCTOR_RUN_COMMAND}</string>
 	</array>
 	<key>RunAtLoad</key>
 	<true/>
@@ -91,9 +91,9 @@ export function renderLaunchdPlist(plan: ServicePlan): string {
 	<key>ProcessType</key>
 	<string>Background</string>
 	<key>StandardOutPath</key>
-	<string>${home}/.honeycomb/hivedoctor/launchd.out.log</string>
+	<string>${home}/.honeycomb/doctor/launchd.out.log</string>
 	<key>StandardErrorPath</key>
-	<string>${home}/.honeycomb/hivedoctor/launchd.err.log</string>
+	<string>${home}/.honeycomb/doctor/launchd.err.log</string>
 </dict>
 </plist>
 `;
@@ -102,15 +102,15 @@ export function renderLaunchdPlist(plan: ServicePlan): string {
 /**
  * Render a systemd unit (Linux). `Restart=always` + `RestartSec` = restart-on-crash;
  * `WantedBy=default.target` (with `systemctl --user enable`) = start-on-login/boot.
- * `Type=simple` because HiveDoctor stays in the foreground of its own process.
+ * `Type=simple` because Doctor stays in the foreground of its own process.
  */
 export function renderSystemdUnit(plan: ServicePlan): string {
 	// Quote the exec path so a space-bearing install prefix cannot mis-split into two argv tokens
 	// (systemd runs ExecStart without a shell, but splits unquoted tokens on whitespace). The run
 	// subcommand is a fixed literal with no spaces, so it needs no quoting.
-	const exec = `${quoteSystemdToken(plan.execPath)} ${HIVEDOCTOR_RUN_COMMAND}`;
+	const exec = `${quoteSystemdToken(plan.execPath)} ${DOCTOR_RUN_COMMAND}`;
 	return `[Unit]
-Description=HiveDoctor - Honeycomb self-healing watchdog
+Description=Doctor - Honeycomb self-healing watchdog
 Documentation=https://get.theapiary.sh
 After=network.target
 
@@ -145,7 +145,7 @@ export function renderScheduledTaskXml(plan: ServicePlan): string {
 	return `<?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <RegistrationInfo>
-    <Description>HiveDoctor - Honeycomb self-healing watchdog</Description>
+    <Description>Doctor - Honeycomb self-healing watchdog</Description>
     <URI>\\${escapeXml(WINDOWS_TASK_NAME)}</URI>
   </RegistrationInfo>
   <Triggers>
@@ -177,7 +177,7 @@ export function renderScheduledTaskXml(plan: ServicePlan): string {
   <Actions Context="Author">
     <Exec>
       <Command>${node}</Command>
-      <Arguments>"${exec}" ${HIVEDOCTOR_RUN_COMMAND}</Arguments>
+      <Arguments>"${exec}" ${DOCTOR_RUN_COMMAND}</Arguments>
     </Exec>
   </Actions>
 </Task>

@@ -20,7 +20,7 @@ describe("install-service / uninstall-service delegate to the real 064b module",
 		const runner = createRecordingRunner();
 		const fs = createMemoryFs();
 		const serviceModule = createServiceModule({
-			execPath: "/usr/bin/hivedoctor",
+			execPath: "/usr/bin/doctor",
 			runner,
 			fs,
 			environment: fixedEnv({ platform: "linux", home: "/home/t" }),
@@ -33,7 +33,7 @@ describe("install-service / uninstall-service delegate to the real 064b module",
 		// The REAL module ran: it wrote the systemd unit and the result line is its honest output.
 		expect(fs.files.has("/home/t/.config/systemd/user/doctor.service")).toBe(true);
 		expect(runner.calls[0]?.command).toBe("systemctl");
-		expect(h.out.text()).toContain("HiveDoctor registered as a systemd service");
+		expect(h.out.text()).toContain("Doctor registered as a systemd service");
 		// And NOT the "not yet available" stub message.
 		expect(h.out.text()).not.toContain(SERVICE_NOT_AVAILABLE);
 	});
@@ -43,7 +43,7 @@ describe("install-service / uninstall-service delegate to the real 064b module",
 		const fs = createMemoryFs();
 		fs.files.set("/home/t/.config/systemd/user/doctor.service", "unit");
 		const serviceModule = createServiceModule({
-			execPath: "/usr/bin/hivedoctor",
+			execPath: "/usr/bin/doctor",
 			runner,
 			fs,
 			environment: fixedEnv({ platform: "linux", home: "/home/t" }),
@@ -60,7 +60,7 @@ describe("install-service / uninstall-service delegate to the real 064b module",
 
 	it("the result satisfies the ServiceModule interface (install + uninstall return ServiceResult)", async () => {
 		const serviceModule = createServiceModule({
-			execPath: "/usr/bin/hivedoctor",
+			execPath: "/usr/bin/doctor",
 			runner: createRecordingRunner(),
 			fs: createMemoryFs(),
 			environment: fixedEnv({ platform: "darwin" }),
@@ -78,12 +78,12 @@ describe("install-service exit code is honest (IRD-192 AC-6)", () => {
 	it("AC-6: a manager-command failure (ok:false) -> non-zero exit + the failure line is printed", async () => {
 		// A fake service module whose install() resolves ok:false mirrors the IRD-192 root-cause
 		// scenario (schtasks /Create rejected the XML). The CLI MUST map that to EXIT_ERROR so the
-		// one-command installers do NOT print "HiveDoctor is watching" (AC-7 depends on this exit).
+		// one-command installers do NOT print "Doctor is watching" (AC-7 depends on this exit).
 		const serviceModule = {
 			async install(): Promise<ServiceResult> {
 				return {
 					ok: false,
-					message: "Registered the HiveDoctor unit but a service-manager command failed (schtasks).",
+					message: "Registered the Doctor unit but a service-manager command failed (schtasks).",
 				};
 			},
 			async uninstall(): Promise<ServiceResult> {

@@ -1,11 +1,11 @@
 /**
- * HiveDoctor needs-attention store (PRD-064g).
+ * Doctor needs-attention store (PRD-064g).
  *
  * Persists the latest structured escalation record so the dashboard can surface
  * a "needs attention" banner on recovery. Two outputs per escalation:
  *
  *   1. `needs-attention.json` (atomic write) -- the current escalation + resolution
- *      state; this is the DASHBOARD READ SEAM. The daemon reads this file; HiveDoctor
+ *      state; this is the DASHBOARD READ SEAM. The daemon reads this file; Doctor
  *      writes it. The dependency is strictly one-directional.
  *
  *      File shape (NeedsAttentionFile, documented below):
@@ -66,7 +66,7 @@ export interface NeedsAttentionFile {
 
 /** Options for {@link createNeedsAttentionStore}. */
 export interface NeedsAttentionStoreOptions {
-	/** HiveDoctor's workspace dir; `needs-attention.json` is written under it. */
+	/** Doctor's workspace dir; `needs-attention.json` is written under it. */
 	readonly workspaceDir: string;
 	/** The existing incident log; the escalation is also appended there. */
 	readonly incidentLog: IncidentLog;

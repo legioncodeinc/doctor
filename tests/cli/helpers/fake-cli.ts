@@ -172,7 +172,7 @@ export function buildCliHarness(options: CliHarnessOptions = {}): CliHarness {
 		return confirmAnswer;
 	});
 
-	const selfUpdate = vi.fn(async () => "HiveDoctor updated (self-update ran).");
+	const selfUpdate = vi.fn(async () => "Doctor updated (self-update ran).");
 	const applyPrimaryUpdate = vi.fn(async () => "Update updated: 1.2.3 -> 1.2.4.");
 	const checkPrimaryUpdate = vi.fn(async () => "No update: already_current.");
 
@@ -184,7 +184,7 @@ export function buildCliHarness(options: CliHarnessOptions = {}): CliHarness {
 			probe: primaryDaemon.probe,
 			statusDaemons: () => daemonSources,
 			readDaemonVersion: primaryDaemon.readDaemonVersion,
-			hivedoctorVersion: "9.9.9-test",
+			doctorVersion: "9.9.9-test",
 			ladder,
 			rungContextFor: (c) => ({ classification: c, logger: silentLogger }),
 			decideRung: (n) => ladder.decide(n),

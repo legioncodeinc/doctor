@@ -45,7 +45,7 @@ export function createFakeClock(start = 0): FakeClock {
 
 /** A throwaway temp workspace dir + a cleanup fn. */
 export function makeWorkspace(): { dir: string; cleanup: () => void } {
-	const dir = mkdtempSync(join(tmpdir(), "hivedoctor-test-"));
+	const dir = mkdtempSync(join(tmpdir(), "doctor-test-"));
 	return { dir, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
 }
 

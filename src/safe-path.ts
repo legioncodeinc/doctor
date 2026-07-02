@@ -2,7 +2,7 @@
  * Path-containment helper (PRD-064 Aikido SAST hardening).
  *
  * ── Why this exists ──────────────────────────────────────────────────────────
- * Every on-disk artifact HiveDoctor touches lives under a single workspace dir
+ * Every on-disk artifact Doctor touches lives under a single workspace dir
  * that is RESOLVED FROM THE ENVIRONMENT (`HONEYCOMB_WORKSPACE` / the CLI cwd, see
  * src/config.ts). That base is therefore a variable, and each store joins a FIXED
  * literal filename onto it (`state.json`, `install.lock`, `incidents.ndjson`,
@@ -20,7 +20,7 @@
  * path now flows through a validator the SAST taint-tracker can see.
  *
  * ── Binding constraints ──────────────────────────────────────────────────────
- * - ZERO runtime deps: `node:path` built-ins ONLY (HiveDoctor design principle 1).
+ * - ZERO runtime deps: `node:path` built-ins ONLY (Doctor design principle 1).
  * - Strict ESM, TS strict. The base itself is trusted to BE the root; we only
  *   guarantee the joined result does not escape it. Resolving the base further
  *   (e.g. realpath) is out of scope: the workspace IS the authority.

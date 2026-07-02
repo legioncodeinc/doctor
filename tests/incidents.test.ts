@@ -14,7 +14,7 @@ let dir: string;
 let clock = 0;
 
 beforeEach(() => {
-	dir = mkdtempSync(join(tmpdir(), "hivedoctor-inc-"));
+	dir = mkdtempSync(join(tmpdir(), "doctor-inc-"));
 	clock = 1_000;
 });
 afterEach(() => {

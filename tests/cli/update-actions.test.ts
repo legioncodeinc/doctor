@@ -78,10 +78,10 @@ describe("createUpdateActions: `update --check` routes to preview, never the tra
 	});
 
 	it("selfUpdate is passed straight through", async () => {
-		const selfUpdate = vi.fn(async () => "HiveDoctor updated");
+		const selfUpdate = vi.fn(async () => "Doctor updated");
 		const fe = fakeEngine({});
 		const actions = createUpdateActions(fe.engine, selfUpdate);
-		expect(await actions.selfUpdate()).toBe("HiveDoctor updated");
+		expect(await actions.selfUpdate()).toBe("Doctor updated");
 		expect(fe.previewUpdate).not.toHaveBeenCalled();
 		expect(fe.runUpdateTransaction).not.toHaveBeenCalled();
 	});

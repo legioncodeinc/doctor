@@ -1,5 +1,5 @@
 /**
- * HiveDoctor shared install mutex (PRD-064c scope; imported by 064e).
+ * Doctor shared install mutex (PRD-064c scope; imported by 064e).
  *
  * A file-based, single-host mutex that guarantees rung 2's reinstall
  * ({@link file://./rungs/reinstall.ts}) and the future auto-update engine (064e)
@@ -9,7 +9,7 @@
  * exists to fix. One lock serializes them.
  *
  * The lock is the EXCLUSIVE-create of a small JSON file at
- * `~/.honeycomb/hivedoctor/install.lock` (the workspace dir, injected). `wx` flag =
+ * `~/.honeycomb/doctor/install.lock` (the workspace dir, injected). `wx` flag =
  * "create, fail if it already exists" = the atomic test-and-set the mutex needs; no
  * second process can win the same create.
  *
@@ -60,7 +60,7 @@ export interface InstallLockClock {
 
 /** Options for {@link createInstallLock}. */
 export interface InstallLockOptions {
-	/** HiveDoctor's workspace dir; `install.lock` is created under it. */
+	/** Doctor's workspace dir; `install.lock` is created under it. */
 	readonly workspaceDir: string;
 	/** Logger for the lock's lifecycle (held/stale/acquired); never a credential. */
 	readonly logger: Logger;

@@ -102,7 +102,7 @@ Most watchdogs are either a cron job with delusions or a monitoring platform tha
 
 - **🔍 Watches and heals.** Probes each daemon's `/health` on a fixed interval, reads per-subsystem detail, and repairs what it can without waking you up.
 - **🪜 Repair ladder with backoff.** Restart, then reinstall, then remove a conflicting `@deeplake/hivemind` global (the package only, never your `~/.deeplake/` data), then escalate. Exponential backoff between rungs; stops the moment health returns.
-- **🐝 Multi-daemon registry.** Supervises the whole fleet from a static registry at `~/.honeycomb/hivedoctor.daemons.json`: honeycomb, the-hive, and hivenectar. A daemon that is down is still supervised, because "should exist" survives independently of "is running."
+- **🐝 Multi-daemon registry.** Supervises the whole fleet from a static registry at `~/.honeycomb/doctor.daemons.json`: honeycomb, hive, and nectar. A daemon that is down is still supervised, because "should exist" survives independently of "is running."
 - **📟 Status endpoint on `:3852`.** A loopback status page plus machine-readable `/status.json`, so you can see the whole fleet's health in one place.
 - **⬆️ Blessed-release auto-update with rollback.** Keeps daemons current behind a blessed-version gate: verify health after the update, roll back on failure.
 - **📣 Opt-out scrubbed telemetry.** When it genuinely cannot heal, it phones home a scrubbed diagnosis so problems get fixed proactively. Never credentials, tokens, or your code. Opt out with `DO_NOT_TRACK=1`, `HONEYCOMB_TELEMETRY=0`, or the dashboard.
@@ -127,7 +127,7 @@ To install or update it on its own:
 
 ```bash
 npm install -g @legioncodeinc/doctor
-hivedoctor install-service   # register the OS service (restart-on-crash, start-on-boot)
+doctor install-service   # register the OS service (restart-on-crash, start-on-boot)
 ```
 
 <details>
@@ -153,26 +153,26 @@ npm run build          # tsc + esbuild -> the single-file bin at bundle/cli.js
 <!-- screenshot pending: drop doctor status page capture into assets/screenshots/dashboard.png -->
 <img src="assets/screenshots/dashboard.png" alt="Doctor status" width="100%">
 
-The dashboard is **The Hive portal at `http://127.0.0.1:3853`**: fleet health lives there, rendered from the data Doctor feeds it. Behind it, Doctor serves its own raw status surface on loopback at **`http://127.0.0.1:3852`**, the authoritative source of truth: every registered daemon's state (`ok`, `degraded`, `unreachable`, or `unknown`), what Doctor last did about it, and whether anything needs your attention. The same data is machine-readable at **`/status.json`**. When something is unhealable, the "needs attention" report surfaces here first, on your machine, before anything leaves it.
+The dashboard is **Hive portal at `http://127.0.0.1:3853`**: fleet health lives there, rendered from the data Doctor feeds it. Behind it, Doctor serves its own raw status surface on loopback at **`http://127.0.0.1:3852`**, the authoritative source of truth: every registered daemon's state (`ok`, `degraded`, `unreachable`, or `unknown`), what Doctor last did about it, and whether anything needs your attention. The same data is machine-readable at **`/status.json`**. When something is unhealable, the "needs attention" report surfaces here first, on your machine, before anything leaves it.
 
 <img src="assets/brand/divider-minor.svg" width="100%" height="3">
 
 ## ⌨️ Using the CLI
 
-Run `hivedoctor` with no arguments for the banner and menu. The full surface:
+Run `doctor` with no arguments for the banner and menu. The full surface:
 
 | Command | What it does |
 |---|---|
-| `hivedoctor status` | daemon health, service state, versions, last heal, opt-out flags |
-| `hivedoctor diagnose` | classify health and print the recommended fix, taking **no** action |
-| `hivedoctor heal` | run the remediation ladder once (gated steps confirm first) |
-| `hivedoctor restart` | restart the primary daemon (rung 1) |
-| `hivedoctor reinstall` | reinstall the primary daemon (rung 2) |
-| `hivedoctor uninstall-hivemind` | remove a conflicting `@deeplake/hivemind` global (rung 3, confirms) |
-| `hivedoctor update [--check]` | update the primary daemon via the blessed gate |
-| `hivedoctor self-update` | update Doctor's own package (the **only** thing that does) |
-| `hivedoctor install-service` / `uninstall-service` | register or remove the OS service |
-| `hivedoctor logs` | tail incident logs for all daemons, or one via `--daemon <name>` |
+| `doctor status` | daemon health, service state, versions, last heal, opt-out flags |
+| `doctor diagnose` | classify health and print the recommended fix, taking **no** action |
+| `doctor heal` | run the remediation ladder once (gated steps confirm first) |
+| `doctor restart` | restart the primary daemon (rung 1) |
+| `doctor reinstall` | reinstall the primary daemon (rung 2) |
+| `doctor uninstall-hivemind` | remove a conflicting `@deeplake/hivemind` global (rung 3, confirms) |
+| `doctor update [--check]` | update the primary daemon via the blessed gate |
+| `doctor self-update` | update Doctor's own package (the **only** thing that does) |
+| `doctor install-service` / `uninstall-service` | register or remove the OS service |
+| `doctor logs` | tail incident logs for all daemons, or one via `--daemon <name>` |
 
 Doctor never updates itself in the background. `self-update` is the single, explicit way to bump it, and there is deliberately no `clear-credentials` command: credential purges are only ever recommended via escalation, never automated.
 
@@ -187,7 +187,7 @@ Do not take our word for it. Shoot the daemon and watch:
 pkill -f honeycomb
 
 # …give the doctor one probe interval, then check
-hivedoctor status
+doctor status
 # honeycomb    ok    healed 12s ago (rung 1: restart)
 ```
 
@@ -201,10 +201,10 @@ The OS supervises the doctor; the doctor supervises everything else. Health flow
 
 ```mermaid
 flowchart TD
-    os["OS supervisor<br/>launchd / systemd / Scheduled Task"] -->|"restart on crash · start on boot"| doc["hivedoctor<br/>status page :3852"]
+    os["OS supervisor<br/>launchd / systemd / Scheduled Task"] -->|"restart on crash · start on boot"| doc["doctor<br/>status page :3852"]
     doc -->|"health probes"| hc["honeycomb :3850"]
-    doc -->|"health probes"| th["the-hive :3853"]
-    doc -->|"health probes"| hn["hivenectar :3854"]
+    doc -->|"health probes"| th["hive :3853"]
+    doc -->|"health probes"| hn["nectar :3854"]
     doc --> ladder{"unhealthy?"}
     ladder -->|"rung 1"| r1["restart"]
     r1 -->|"still failing"| r2["reinstall"]
@@ -230,7 +230,7 @@ And when it truly cannot fix something, it does not shrug. It writes a structure
 
 - **Status page.** `http://127.0.0.1:3852` on loopback, human-readable fleet health at a glance.
 - **`GET /status.json`.** The same fleet model as JSON, for scripts and anything else that wants machine-readable truth.
-- **SSE telemetry feed.** Doctor is the single source of truth for fleet health and telemetry: it polls each service's local SQLite telemetry (read-only, via Node's built-in `node:sqlite`) plus `/health`, merges the results, and streams one Server-Sent-Events feed to [the-hive](https://theapiary.sh) portal, which renders the live health rail and readiness screens.
+- **SSE telemetry feed.** Doctor is the single source of truth for fleet health and telemetry: it polls each service's local SQLite telemetry (read-only, via Node's built-in `node:sqlite`) plus `/health`, merges the results, and streams one Server-Sent-Events feed to [hive](https://theapiary.sh) portal, which renders the live health rail and readiness screens.
 
 No MCP server, no SDK, no inbound ports beyond the loopback status page. That is by design: the watchdog's attack surface stays as small as its dependency tree.
 
@@ -255,7 +255,7 @@ npm run build        # tsc + esbuild -> the single-file bin at bundle/cli.js
 npm run pack:check   # verify the publish payload
 ```
 
-The build inlines the package version at bundle time: esbuild reads `package.json` and defines `__HIVEDOCTOR_VERSION__`, so the shipped binary always reports exactly what was cut. One manifest is the single source of truth; there is no cross-manifest sync to run.
+The build inlines the package version at bundle time: esbuild reads `package.json` and defines `__DOCTOR_VERSION__`, so the shipped binary always reports exactly what was cut. One manifest is the single source of truth; there is no cross-manifest sync to run.
 
 <img src="assets/brand/divider-major.svg" width="100%" height="6">
 

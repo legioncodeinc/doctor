@@ -1,5 +1,5 @@
 /**
- * HiveDoctor's tiny leveled logger (PRD-064a, foundation).
+ * Doctor's tiny leveled logger (PRD-064a, foundation).
  *
  * Built-ins only, low-verbosity by default. The happy path (a healthy probe) logs
  * at `debug` and is silent at the default level; the hard path (a remediation, an
@@ -13,7 +13,7 @@
  * propagated. This is the one place an empty-catch is correct, and it is documented.
  *
  * It carries NO secret by construction: callers pass a message + a flat fields
- * object; HiveDoctor only ever logs subsystem names, coarse states, counts, and
+ * object; Doctor only ever logs subsystem names, coarse states, counts, and
  * durations, never tokens or URLs with credentials (mirrors the daemon's logging
  * posture in src/daemon/runtime/health.ts).
  */
@@ -33,7 +33,7 @@ const LEVEL_RANK: Readonly<Record<LogLevel, number>> = {
 /** A flat, secret-free structured-fields bag attached to a log line. */
 export type LogFields = Readonly<Record<string, unknown>>;
 
-/** The minimal logger surface the rest of HiveDoctor depends on. */
+/** The minimal logger surface the rest of Doctor depends on. */
 export interface Logger {
 	debug(message: string, fields?: LogFields): void;
 	info(message: string, fields?: LogFields): void;
@@ -71,7 +71,7 @@ const defaultSink: LogSink = {
 /**
  * Serialize one structured line as a single JSON object: `{ ts, level, msg, ...fields }`.
  * JSON keeps the line greppable and machine-parseable for the later telemetry wave (064d),
- * and `JSON.stringify` of a flat fields bag cannot itself throw on the values HiveDoctor
+ * and `JSON.stringify` of a flat fields bag cannot itself throw on the values Doctor
  * passes (strings, numbers, booleans). A circular/unstringifiable value is caught by the
  * sink wrapper rather than crashing the caller.
  */
@@ -90,7 +90,7 @@ function format(now: number, level: LogLevel, message: string, fields: LogFields
 /**
  * Build a leveled logger. Every method is wrapped so a logging failure never
  * propagates into the watch loop. The level threshold is read once at construction
- * (HiveDoctor's level does not change at runtime in Wave 0).
+ * (Doctor's level does not change at runtime in Wave 0).
  */
 export function createLogger(options: LoggerOptions = {}): Logger {
 	const threshold = LEVEL_RANK[options.level ?? "info"];

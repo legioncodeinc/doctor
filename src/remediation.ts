@@ -1,5 +1,5 @@
 /**
- * HiveDoctor remediation ladder (PRD-064a scope; rung definitions cross-ref 064c).
+ * Doctor remediation ladder (PRD-064a scope; rung definitions cross-ref 064c).
  *
  * A {@link Rung} is one repair action; a {@link RemediationLadder} holds the ordered
  * registry and decides which rung to run for a given health classification, advancing
@@ -13,7 +13,7 @@
  *
  * Idempotency + the watchdog-war guard (064a AC-064a.6, parent AC-9): rung 1 does NOT
  * start a second daemon when the PID/lock is held AND `/health` is answering. It also
- * honors a cooldown after a restart HiveDoctor itself performed, so it never fights the
+ * honors a cooldown after a restart Doctor itself performed, so it never fights the
  * daemon's own restart-helper.ts (parent Risk "Watchdog war / double-restart").
  *
  * Crash-safety (design principle 1): every rung runs inside the ladder's try/catch; a
@@ -111,11 +111,11 @@ export interface RestartRungDeps {
 	readonly readDaemonPid: ReadDaemonPidFn;
 	/** Re-probes `/health` for the lock-held-and-answering idempotency check. */
 	readonly isHealthy: IsHealthyFn;
-	/** Cooldown in ms after a restart HiveDoctor performed (no double-restart inside it). */
+	/** Cooldown in ms after a restart Doctor performed (no double-restart inside it). */
 	readonly cooldownMs: number;
 	/** Injected clock. */
 	readonly clock: RemediationClock;
-	/** Returns the ISO/epoch ms of the last restart HiveDoctor performed, or null. */
+	/** Returns the ISO/epoch ms of the last restart Doctor performed, or null. */
 	readonly lastRestartAt: () => number | null;
 	/** Records that a restart just happened (so the cooldown window starts). */
 	readonly markRestarted: (atMs: number) => void;
@@ -201,7 +201,7 @@ export interface RemediationLadder {
 	run(rung: number, ctx: RungContext): Promise<RungResult>;
 	/**
 	 * Terminal escalation hand-off (rung 4, PRD-064c). Called when the numbered rungs
-	 * cannot restore health, or when the action HiveDoctor believes is needed is the
+	 * cannot restore health, or when the action Doctor believes is needed is the
 	 * DEFERRED credential purge (AC-064c.3). Hands the structured {@link EscalationRecord}
 	 * to the injected hook crash-safely - a thrown hook becomes a failed result, never a
 	 * thrown error. When no hook was injected, resolves to a skipped result so the caller
