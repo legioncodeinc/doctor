@@ -22,4 +22,4 @@ export const HIVEDOCTOR_VERSION: string =
 		: (process.env["HIVEDOCTOR_VERSION"] ?? "0.0.0-dev");
 
 /** The npm package name of HiveDoctor itself (the ONLY thing `self-update` ever installs). */
-export const HIVEDOCTOR_PACKAGE = "@legioncodeinc/hivedoctor" as const;
+export const HIVEDOCTOR_PACKAGE = "@legioncodeinc/doctor" as const;

@@ -1,7 +1,7 @@
 // HiveDoctor's OWN per-target bundler (PRD-063 INT-1).
 //
 // HiveDoctor ships as a SEPARATE, dependency-light npm package
-// (`@legioncodeinc/hivedoctor`, PRD-063 OD-6) with its OWN build, gates, and
+// (`@legioncodeinc/doctor`, PRD-063 OD-6) with its OWN build, gates, and
 // release job. This config is the analogue of the repo-root esbuild.config.mjs,
 // scoped to this one package: it consumes the modular ESM `tsc` emits under
 // `dist/` and produces ONE self-contained executable bundle, `bundle/cli.js`,

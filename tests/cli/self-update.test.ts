@@ -25,7 +25,7 @@ function recordingRunner(result: CommandResult): { runner: CommandRunner; calls:
 }
 
 describe("createSelfUpdate", () => {
-	it("runs `npm install -g @legioncodeinc/hivedoctor@latest`", async () => {
+	it("runs `npm install -g @legioncodeinc/doctor@latest`", async () => {
 		const r = recordingRunner({ ok: true, code: 0, stdout: "", stderr: "" });
 		const selfUpdate = createSelfUpdate({ runner: r.runner, logger: silentLogger });
 		const msg = await selfUpdate();

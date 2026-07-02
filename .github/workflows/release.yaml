@@ -1,8 +1,8 @@
 name: Release
 
-# The npm-publish workflow for @legioncodeinc/hivedoctor. HiveDoctor is its own
+# The npm-publish workflow for @legioncodeinc/doctor. HiveDoctor is its own
 # dependency-light package (PRD-063 OD-6) released directly from THIS repository
-# (github.com/legioncodeinc/hivedoctor). It mirrors the fleet's OIDC
+# (github.com/legioncodeinc/doctor). It mirrors the fleet's OIDC
 # Trusted-Publishing pattern (same tokenless auth, same fail-closed gating, same
 # provenance) and runs at this repo's root on `v*` tags.
 #
@@ -25,8 +25,8 @@ name: Release
 # AUTH: npm TRUSTED PUBLISHING (OIDC), no NPM_TOKEN. The publish authenticates
 # tokenlessly: GitHub Actions presents a short-lived OIDC identity (via the
 # `id-token: write` permission on the publish job) that npm verifies against
-# the trusted publisher configured on the @legioncodeinc/hivedoctor package
-# (org + repo `hivedoctor` + this workflow filename `release.yaml`). There is
+# the trusted publisher configured on the @legioncodeinc/doctor package
+# (org + repo `doctor` + this workflow filename `release.yaml`). There is
 # NO long-lived automation token anywhere in this workflow or in repo secrets.
 # Provenance stays ON (the same OIDC identity signs the supply-chain
 # attestation). Trusted Publishing REQUIRES npm >= 11.5.1, which Node 22 does
@@ -36,7 +36,7 @@ name: Release
 # misconfigured or not-cut-yet package from shipping all hold here:
 #   * the publishability preflight aborts if the version is 0.0.0 (the
 #     deliberate not-cut-yet sentinel) or if the name is not the scoped
-#     @legioncodeinc/hivedoctor, so a stray tag push cannot publish a 0.0.0 or a
+#     @legioncodeinc/doctor, so a stray tag push cannot publish a 0.0.0 or a
 #     wrong-named package.
 #   * a real `npm publish` only happens on a tag push (`vX.Y.Z`) AND when this is
 #     not a dry run; a workflow_dispatch always rehearses (gate + `npm publish
@@ -53,7 +53,7 @@ name: Release
 
 on:
   push:
-    # A `vX.Y.Z` tag releases this package. This is the hivedoctor repo, so
+    # A `vX.Y.Z` tag releases this package. This is the doctor repo, so
     # there is no collision concern with the parent honeycomb package's tags.
     tags: ['v*']
   workflow_dispatch:
@@ -113,7 +113,7 @@ jobs:
       - name: Install (npm ci)
         run: npm ci
 
-      # The FULL package gate, identical recipe to the hivedoctor CI job. A
+      # The FULL package gate, identical recipe to the doctor CI job. A
       # release must clear the same bar as a PR before any tarball is built.
       - name: HiveDoctor gate (typecheck + test)
         run: npm run ci
@@ -162,7 +162,7 @@ jobs:
       # EITHER:
       #   * the version is 0.0.0 (the deliberate not-cut-yet sentinel; a real cut
       #     bumps the version via `npm version`); OR
-      #   * `name` is not the scoped @legioncodeinc/hivedoctor (a scoped public
+      #   * `name` is not the scoped @legioncodeinc/doctor (a scoped public
       #     package must publish under its scoped name with access=public).
       # A real cut bumps the version (npm version) AND tags vX.Y.Z.
       - name: Preflight - publishability (version + scoped-name guard)
@@ -176,8 +176,8 @@ jobs:
             echo "::error::package.json version is the 0.0.0 not-cut-yet sentinel. Bump it (npm version <x.y.z>) and tag v<x.y.z> to cut a real release."
             FAIL=1
           fi
-          if [ "$PKG_NAME" != "@legioncodeinc/hivedoctor" ]; then
-            echo "::error::package.json name is '$PKG_NAME', expected the scoped '@legioncodeinc/hivedoctor'. A scoped public publish requires the scoped name + publishConfig.access=public."
+          if [ "$PKG_NAME" != "@legioncodeinc/doctor" ]; then
+            echo "::error::package.json name is '$PKG_NAME', expected the scoped '@legioncodeinc/doctor'. A scoped public publish requires the scoped name + publishConfig.access=public."
             FAIL=1
           fi
           if [ "$FAIL" = "1" ]; then

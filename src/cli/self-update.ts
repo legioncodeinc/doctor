@@ -5,12 +5,12 @@
  * "Never surprise-update itself" is sacred (PRD-064 design principle / parent AC-6):
  * HiveDoctor is built NOT to need updating, and no autonomous code path - not the watch
  * loop, not rung 2, not the 064e auto-update engine - ever installs
- * `@legioncodeinc/hivedoctor`. The auto-update engine's package is HARD-WIRED to the
+ * `@legioncodeinc/doctor`. The auto-update engine's package is HARD-WIRED to the
  * PRIMARY daemon (`@legioncodeinc/honeycomb`); it cannot target HiveDoctor. This module is
  * the single, deliberate exception, reachable only by the explicit `hivedoctor self-update`
  * command.
  *
- * It runs `npm i -g @legioncodeinc/hivedoctor@latest` through the SAME injected
+ * It runs `npm i -g @legioncodeinc/doctor@latest` through the SAME injected
  * {@link CommandRunner} the rungs use (no shell, argv array, never throws). Crash-safe: a
  * failed install is a returned message, never a thrown error. Built-ins only.
  */
@@ -37,7 +37,7 @@ const ACTION = "self-update";
 /**
  * Build the self-update action. Returns a human-readable result line (success or a
  * scrubbed failure detail); NEVER throws. Calling this is the ONLY way
- * `@legioncodeinc/hivedoctor` is ever installed.
+ * `@legioncodeinc/doctor` is ever installed.
  */
 export function createSelfUpdate(deps: SelfUpdateDeps): () => Promise<string> {
 	const tag = deps.tag ?? "latest";

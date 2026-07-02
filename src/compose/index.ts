@@ -19,7 +19,7 @@
  *
  * The `self-update` boundary is SACRED here too: this assembly wires the auto-update engine
  * HARD-CODED to the PRIMARY daemon package (`@legioncodeinc/honeycomb`). There is no code
- * path in this composition that installs `@legioncodeinc/hivedoctor`; that is reachable
+ * path in this composition that installs `@legioncodeinc/doctor`; that is reachable
  * ONLY through the explicit CLI `self-update` command (AC-064f.5 / parent AC-6).
  *
  * Built-ins only; all I/O behind seams so the smoke test drives the whole assembly hermetic.
