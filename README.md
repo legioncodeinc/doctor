@@ -153,7 +153,7 @@ npm run build          # tsc + esbuild -> the single-file bin at bundle/cli.js
 <!-- screenshot pending: drop doctor status page capture into assets/screenshots/dashboard.png -->
 <img src="assets/screenshots/dashboard.png" alt="Doctor status" width="100%">
 
-Doctor serves a small local status page on loopback at **`http://127.0.0.1:3852`**. It is the one authoritative view of fleet health: every registered daemon's state (`ok`, `degraded`, `unreachable`, or `unknown`), what Doctor last did about it, and whether anything needs your attention. The same data is machine-readable at **`/status.json`**. When something is unhealable, the "needs attention" report surfaces here first, on your machine, before anything leaves it.
+The dashboard is **The Hive portal at `http://127.0.0.1:3853`**: fleet health lives there, rendered from the data Doctor feeds it. Behind it, Doctor serves its own raw status surface on loopback at **`http://127.0.0.1:3852`**, the authoritative source of truth: every registered daemon's state (`ok`, `degraded`, `unreachable`, or `unknown`), what Doctor last did about it, and whether anything needs your attention. The same data is machine-readable at **`/status.json`**. When something is unhealable, the "needs attention" report surfaces here first, on your machine, before anything leaves it.
 
 <img src="assets/brand/divider-minor.svg" width="100%" height="3">
 
