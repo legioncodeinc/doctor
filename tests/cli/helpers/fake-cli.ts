@@ -121,6 +121,8 @@ export interface CliHarnessOptions {
 	}[];
 	/** Whether a 064b service module is wired (default: absent). */
 	readonly serviceModule?: CliDeps["serviceModule"];
+	/** The lifecycle capture-event emitter (default: absent = no lifecycle events). */
+	readonly lifecycle?: CliDeps["lifecycle"];
 	/** Force color on/off (default off, so assertions are plain text). */
 	readonly color?: boolean;
 }
@@ -204,6 +206,7 @@ export function buildCliHarness(options: CliHarnessOptions = {}): CliHarness {
 				return options.incidents ?? [];
 			},
 			...(options.serviceModule !== undefined ? { serviceModule: options.serviceModule } : {}),
+			...(options.lifecycle !== undefined ? { lifecycle: options.lifecycle } : {}),
 		},
 	};
 

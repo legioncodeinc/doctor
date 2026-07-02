@@ -62,6 +62,7 @@ import {
 	type NeedsAttentionStore,
 } from "../escalation/needs-attention-store.js";
 import { emitEscalationToHostedSink } from "../escalation/hosted-sink.js";
+import { createLifecycleTelemetry } from "../telemetry/capture.js";
 import { emitError, emitInstallHealth, type EmitDeps } from "../telemetry/emit.js";
 import {
 	createStatusPageServer,
@@ -660,6 +661,16 @@ export function createHiveDoctor(options: CreateHiveDoctorOptions = {}): HiveDoc
 		statePinnedVersion: undefined,
 	});
 
+	// The lifecycle capture-event emitter for the additive `hivedoctor_updated` event
+	// (deduped per to_version in hivedoctor's own un-sharded state.json). distinct_id
+	// prefers the shared installer id (~/.honeycomb/install-id) with the device id as
+	// fallback. Gated (empty key / DO_NOT_TRACK / HONEYCOMB_TELEMETRY=0) + fail-soft, so
+	// wiring it changes no opt-out behavior and can never destabilize the watchdog.
+	const lifecycle = createLifecycleTelemetry({
+		stateStore: createStateStore({ workspaceDir: config.workspaceDir, logger }),
+		distinctId: { deviceId },
+	});
+
 	const updateEngine: UpdateEngine =
 		options.updateEngine ??
 		createUpdateEngine({
@@ -687,6 +698,7 @@ export function createHiveDoctor(options: CreateHiveDoctorOptions = {}): HiveDoc
 				...(optOut.pinnedVersion !== undefined ? { pinnedVersion: optOut.pinnedVersion } : {}),
 			},
 			deviceId,
+			lifecycle,
 			logger,
 		});
 

@@ -44,6 +44,18 @@ export interface HiveDoctorState {
 	readonly lastHealAt: string | null;
 	/** ISO-8601 of the last restart HiveDoctor performed, or null (drives the cooldown across restarts). */
 	readonly lastRestartAt: string | null;
+	/**
+	 * True once the `hivedoctor_installed` lifecycle capture event has been reported for this
+	 * machine (lifecycle telemetry dedupe: re-installs never re-fire). Optional so existing
+	 * state files and literals stay valid; absent means "not yet reported".
+	 */
+	readonly installedEventReported?: boolean;
+	/**
+	 * The to_version of the last `hivedoctor_updated` lifecycle capture event reported
+	 * (lifecycle telemetry dedupe: one event per target version). Optional; absent means
+	 * "no update event reported yet".
+	 */
+	readonly updatedEventReportedVersion?: string;
 }
 
 /** The default state for a fresh box / unreadable file. */
@@ -116,6 +128,12 @@ export function mergeState(parsed: unknown): HiveDoctorState {
 		backoffRung: coerceCount(o.backoffRung, DEFAULT_STATE.backoffRung),
 		lastHealAt: coerceIso(o.lastHealAt),
 		lastRestartAt: coerceIso(o.lastRestartAt),
+		// Lifecycle capture-event dedupe markers: only well-typed values survive; anything
+		// else degrades to "absent" (= not yet reported), never to garbage.
+		...(o.installedEventReported === true ? { installedEventReported: true } : {}),
+		...(typeof o.updatedEventReportedVersion === "string" && o.updatedEventReportedVersion !== ""
+			? { updatedEventReportedVersion: o.updatedEventReportedVersion }
+			: {}),
 	};
 }
 

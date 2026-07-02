@@ -18,6 +18,7 @@ import type { Colors } from "./colors.js";
 import type { ReadInstalledVersionFn } from "../update/update-engine.js";
 import type { HealthClassification } from "../health-probe.js";
 import type { LadderDecision, RemediationLadder, RungContext } from "../remediation.js";
+import type { LifecycleTelemetry } from "../telemetry/capture.js";
 import type { ServiceModule } from "./service-stub.js";
 import type { ResolvedOptOut } from "./opt-out.js";
 
@@ -125,6 +126,13 @@ export interface CliDeps {
 	 * print the "not yet available" stub message. The composition root injects the real module.
 	 */
 	readonly serviceModule?: ServiceModule;
+	/**
+	 * The lifecycle capture-event emitter (PostHog `hivedoctor_installed` /
+	 * `hivedoctor_uninstalled`), when wired in. Every method is gated + fail-soft and never
+	 * throws; the dispatcher fires it around the service verbs. Optional so the test harness
+	 * and any partial wiring stay valid (absent = no lifecycle events).
+	 */
+	readonly lifecycle?: LifecycleTelemetry;
 }
 
 /** Everything a command needs: IO + styling + deps. */

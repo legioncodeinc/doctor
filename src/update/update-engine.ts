@@ -29,6 +29,7 @@
 import type { InstallLock } from "../install-lock.js";
 import type { Logger } from "../logger.js";
 import type { CommandRunner } from "../rungs/command-runner.js";
+import type { LifecycleTelemetry } from "../telemetry/capture.js";
 import { fetchBlessedVersion, type BlessedChannelOptions } from "./blessed-channel.js";
 import type { ReadLatestVersionFn } from "./registry.js";
 import { decideUpdate, type NoUpdateReason, type UpdateDecision, type UpdateOptOut } from "./update-policy.js";
@@ -82,6 +83,12 @@ export interface UpdateEngineDeps {
 	readonly deviceId: string;
 	/** The update/rollback telemetry seam (default: the 064d chokepoint adapter). */
 	readonly emit?: UpdateEmit;
+	/**
+	 * The lifecycle capture-event emitter for the additive `hivedoctor_updated` event
+	 * (deduped per to_version inside the emitter). Only consulted when `emit` is NOT
+	 * injected (an injected emit seam owns its own telemetry). Absent = no capture leg.
+	 */
+	readonly lifecycle?: LifecycleTelemetry;
 	/** Logger. */
 	readonly logger: Logger;
 	/** Injected clock for telemetry timestamps (default `Date.now`). */
@@ -167,7 +174,7 @@ function outcomeOf(status: UpdateTransactionStatus): UpdateOutcome | null {
 /** Build the auto-update engine. */
 export function createUpdateEngine(deps: UpdateEngineDeps): UpdateEngine {
 	const now = deps.now ?? Date.now;
-	const emit = deps.emit ?? createDefaultUpdateEmit();
+	const emit = deps.emit ?? createDefaultUpdateEmit({}, deps.lifecycle);
 
 	/** Install one exact version of the primary package through the injected runner. */
 	async function installVersion(version: string): Promise<boolean> {
