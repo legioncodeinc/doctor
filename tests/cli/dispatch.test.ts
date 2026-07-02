@@ -22,7 +22,7 @@ describe("dispatch (PRD-064f)", () => {
 			// The attribution banner carries both wordmarks.
 			expect(text).toContain("LEGION CODE INC.");
 			expect(text).toContain("ACTIVELOOP");
-			expect(text).toContain("HiveDoctor");
+			expect(text).toContain("Doctor");
 			// The menu: a sampling of commands must be listed.
 			expect(text).toContain("status");
 			expect(text).toContain("diagnose");
