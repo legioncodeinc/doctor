@@ -2,7 +2,7 @@
  * Hand-rolled OTLP Logs JSON serializer (PRD-064d AC-064d.7).
  *
  * PostHog Logs is an OTLP/HTTP+JSON receiver at `{host}/i/v1/logs`. Because
- * HiveDoctor's design principle 1 forbids runtime npm dependencies, we hand-roll
+ * Doctor's design principle 1 forbids runtime npm dependencies, we hand-roll
  * the `LogsData` envelope instead of pulling `@opentelemetry/otlp-exporter-*` or
  * any SDK package. The wire format is OTLP Protobuf-JSON encoding (the subset
  * PostHog's alpha logs endpoint accepts): `resourceLogs -> scopeLogs ->

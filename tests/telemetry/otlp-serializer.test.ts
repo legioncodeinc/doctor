@@ -7,7 +7,7 @@
  * receiver) would accept.
  *
  * AC-064d.7: no @opentelemetry/* dependency -- asserted by checking that
- * hivedoctor/package.json has no such entry (last test in this file).
+ * doctor/package.json has no such entry (last test in this file).
  */
 
 import { readFileSync } from "node:fs";
@@ -83,9 +83,9 @@ describe("toAnyValue", () => {
 
 describe("toAttributes", () => {
 	it("produces an array of key-value pairs with OTLP AnyValue wrappers", () => {
-		const result = toAttributes({ "service.name": "hivedoctor", version: "1.0.0" });
+		const result = toAttributes({ "service.name": "doctor", version: "1.0.0" });
 		expect(result).toHaveLength(2);
-		expect(result[0]).toStrictEqual({ key: "service.name", value: { stringValue: "hivedoctor" } });
+		expect(result[0]).toStrictEqual({ key: "service.name", value: { stringValue: "doctor" } });
 		expect(result[1]).toStrictEqual({ key: "version", value: { stringValue: "1.0.0" } });
 	});
 
@@ -225,8 +225,8 @@ describe("buildLogsData", () => {
 		});
 
 		const data = buildLogsData({
-			resourceAttributes: { "service.name": "hivedoctor", device_id: "device-123" },
-			scopeName: "hivedoctor",
+			resourceAttributes: { "service.name": "doctor", device_id: "device-123" },
+			scopeName: "doctor",
 			scopeVersion: "0.1.0",
 			logRecords: [logRecord],
 		});
@@ -245,7 +245,7 @@ describe("buildLogsData", () => {
 		expect(Array.isArray(resourceLogs.resource.attributes)).toBe(true);
 
 		const serviceName = resourceLogs.resource.attributes.find((a) => a.key === "service.name");
-		expect(serviceName).toStrictEqual({ key: "service.name", value: { stringValue: "hivedoctor" } });
+		expect(serviceName).toStrictEqual({ key: "service.name", value: { stringValue: "doctor" } });
 		const deviceId = resourceLogs.resource.attributes.find((a) => a.key === "device_id");
 		expect(deviceId).toStrictEqual({ key: "device_id", value: { stringValue: "device-123" } });
 
@@ -257,7 +257,7 @@ describe("buildLogsData", () => {
 		const scopeLogs = resourceLogs.scopeLogs[0];
 		expect(scopeLogs).toBeDefined();
 		if (!scopeLogs) throw new Error("no scopeLogs[0]");
-		expect(scopeLogs.scope).toStrictEqual({ name: "hivedoctor", version: "0.1.0" });
+		expect(scopeLogs.scope).toStrictEqual({ name: "doctor", version: "0.1.0" });
 		expect(Array.isArray(scopeLogs.logRecords)).toBe(true);
 		expect(scopeLogs.logRecords).toHaveLength(1);
 	});
@@ -273,8 +273,8 @@ describe("buildLogsData", () => {
 			});
 
 		const data = buildLogsData({
-			resourceAttributes: { "service.name": "hivedoctor" },
-			scopeName: "hivedoctor",
+			resourceAttributes: { "service.name": "doctor" },
+			scopeName: "doctor",
 			scopeVersion: "0.0.0",
 			logRecords: [makeRecord("a"), makeRecord("b")],
 		});
@@ -298,8 +298,8 @@ describe("serializeLogsData", () => {
 			attributes: { stream: "error" },
 		});
 		const data = buildLogsData({
-			resourceAttributes: { "service.name": "hivedoctor", device_id: "abc" },
-			scopeName: "hivedoctor",
+			resourceAttributes: { "service.name": "doctor", device_id: "abc" },
+			scopeName: "doctor",
 			scopeVersion: "0.0.0",
 			logRecords: [logRecord],
 		});
@@ -322,7 +322,7 @@ describe("serializeLogsData", () => {
 		});
 		const data = buildLogsData({
 			resourceAttributes: {},
-			scopeName: "hivedoctor",
+			scopeName: "doctor",
 			scopeVersion: "0.0.0",
 			logRecords: [logRecord],
 		});
@@ -343,7 +343,7 @@ describe("serializeLogsData", () => {
 		});
 		const data = buildLogsData({
 			resourceAttributes: {},
-			scopeName: "hivedoctor",
+			scopeName: "doctor",
 			scopeVersion: "0.0.0",
 			logRecords: [logRecord],
 		});
@@ -354,11 +354,11 @@ describe("serializeLogsData", () => {
 });
 
 // ────────────────────────────────────────────────────────────────────────────
-// AC-064d.7 -- no @opentelemetry/* dependency in hivedoctor/package.json
+// AC-064d.7 -- no @opentelemetry/* dependency in doctor/package.json
 // ────────────────────────────────────────────────────────────────────────────
 
 describe("AC-064d.7 no OpenTelemetry SDK dependency", () => {
-	it("hivedoctor/package.json has no @opentelemetry/* entry in any dep field", () => {
+	it("doctor/package.json has no @opentelemetry/* entry in any dep field", () => {
 		// Resolve the path relative to this test file so it works from any cwd.
 		const dir = fileURLToPath(new URL("../../", import.meta.url));
 		const pkgPath = join(dir, "package.json");

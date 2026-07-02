@@ -3,7 +3,7 @@
  * framework - keep arg parsing minimal (built-ins) to honor the can't-crash principle").
  *
  * No `yargs`, no `commander`, no `minimist` - those are runtime deps and are banned from
- * the zero-dep watchdog package. This parser does exactly what the HiveDoctor command
+ * the zero-dep watchdog package. This parser does exactly what the Doctor command
  * surface needs and nothing more:
  *   - the FIRST positional token is the command (e.g. `status`);
  *   - `--flag` becomes a boolean true;

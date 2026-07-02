@@ -1,5 +1,5 @@
 /**
- * HiveDoctor configuration resolution (PRD-064a, foundation).
+ * Doctor configuration resolution (PRD-064a, foundation).
  *
  * Resolves the watchdog's runtime config from environment variables layered over
  * built-in defaults, hand-validated with no zod (design principle 1: runtime is
@@ -13,7 +13,7 @@
  *   - target /health URL    http://127.0.0.1:3850/health  (the primary daemon)
  *   - backoff floor / ceil  1s / 30s  (064a scope: geometric, floor 1s, ceiling 30s)
  *   - restart give-up        3   (OD-4 resolved: reinstall after 3 failed restarts)
- *   - workspace dir          ~/.honeycomb/hivedoctor  (PRD-064 data-model section)
+ *   - workspace dir          ~/.honeycomb/doctor  (PRD-064 data-model section)
  *
  * Secret-free by construction: no value here is a credential. The daemon PID/lock
  * path (~/.honeycomb/daemon.pid) is included because rung 1 must respect it (064a
@@ -26,7 +26,7 @@ import { join } from "node:path";
 import { DEFAULT_STATUS_PAGE_PORT } from "./status-page/server.js";
 
 /** The fully-resolved, validated watchdog config the supervisor consumes. */
-export interface HiveDoctorConfig {
+export interface DoctorConfig {
 	/** How often the watch loop probes `/health`, in ms (default 30000). */
 	readonly probeIntervalMs: number;
 	/** Per-probe HTTP timeout, in ms (default 2000). A wedged socket must never hang the loop. */
@@ -43,13 +43,13 @@ export interface HiveDoctorConfig {
 	readonly backoffCeilingMs: number;
 	/** Consecutive failed restarts before advancing off rung 1 (default 3, OD-4). */
 	readonly restartGiveUpThreshold: number;
-	/** Cooldown after a restart HiveDoctor performed, in ms (default 5000), so it does not fight the daemon's own restart-helper. */
+	/** Cooldown after a restart Doctor performed, in ms (default 5000), so it does not fight the daemon's own restart-helper. */
 	readonly restartCooldownMs: number;
 	/** How often the install-health telemetry snapshot is emitted, in ms (default 3600000 = 60 min, PRD-064d AC-064d.2). */
 	readonly installHealthIntervalMs: number;
-	/** HiveDoctor's own workspace dir (default ~/.honeycomb/hivedoctor). */
+	/** Doctor's own workspace dir (default ~/.honeycomb/doctor). */
 	readonly workspaceDir: string;
-	/** The primary daemon PID/lock file HiveDoctor respects (default ~/.honeycomb/daemon.pid). */
+	/** The primary daemon PID/lock file Doctor respects (default ~/.honeycomb/daemon.pid). */
 	readonly daemonPidPath: string;
 }
 
@@ -79,7 +79,7 @@ export const DEFAULTS: ConfigDefaults = {
 	restartGiveUpThreshold: 3,
 	restartCooldownMs: 5_000,
 	// 60 minutes: a heartbeat coarse enough to be cheap, frequent enough to spot a box that
-	// never heals (PRD-064d AC-064d.2). Operator-overridable via HIVEDOCTOR_INSTALL_HEALTH_INTERVAL_MS.
+	// never heals (PRD-064d AC-064d.2). Operator-overridable via DOCTOR_INSTALL_HEALTH_INTERVAL_MS.
 	installHealthIntervalMs: 3_600_000,
 };
 
@@ -134,45 +134,45 @@ function parseHealthUrl(raw: string | undefined, fallback: string): string {
  * floor even if an operator inverts them.
  *
  * Recognized env vars (all optional, all defaulted):
- *   - HIVEDOCTOR_PROBE_INTERVAL_MS
- *   - HIVEDOCTOR_PROBE_TIMEOUT_MS
- *   - HIVEDOCTOR_STARTUP_GRACE_MS
- *   - HIVEDOCTOR_HEALTH_URL
- *   - HIVEDOCTOR_STATUS_PAGE_PORT
- *   - HIVEDOCTOR_BACKOFF_FLOOR_MS
- *   - HIVEDOCTOR_BACKOFF_CEILING_MS
- *   - HIVEDOCTOR_RESTART_GIVE_UP
- *   - HIVEDOCTOR_RESTART_COOLDOWN_MS
- *   - HIVEDOCTOR_INSTALL_HEALTH_INTERVAL_MS
- *   - HIVEDOCTOR_WORKSPACE_DIR
+ *   - DOCTOR_PROBE_INTERVAL_MS
+ *   - DOCTOR_PROBE_TIMEOUT_MS
+ *   - DOCTOR_STARTUP_GRACE_MS
+ *   - DOCTOR_HEALTH_URL
+ *   - DOCTOR_STATUS_PAGE_PORT
+ *   - DOCTOR_BACKOFF_FLOOR_MS
+ *   - DOCTOR_BACKOFF_CEILING_MS
+ *   - DOCTOR_RESTART_GIVE_UP
+ *   - DOCTOR_RESTART_COOLDOWN_MS
+ *   - DOCTOR_INSTALL_HEALTH_INTERVAL_MS
+ *   - DOCTOR_WORKSPACE_DIR
  *   - HONEYCOMB_DAEMON_PID_PATH
  */
 export function resolveConfig(
 	env: NodeJS.ProcessEnv = process.env,
 	home: string = homedir(),
-): HiveDoctorConfig {
-	const defaultWorkspace = join(home, ".honeycomb", "hivedoctor");
+): DoctorConfig {
+	const defaultWorkspace = join(home, ".honeycomb", "doctor");
 	const defaultPidPath = join(home, ".honeycomb", "daemon.pid");
 
-	const floor = parsePositiveInt(env.HIVEDOCTOR_BACKOFF_FLOOR_MS, DEFAULTS.backoffFloorMs);
-	const ceilingRaw = parsePositiveInt(env.HIVEDOCTOR_BACKOFF_CEILING_MS, DEFAULTS.backoffCeilingMs);
+	const floor = parsePositiveInt(env.DOCTOR_BACKOFF_FLOOR_MS, DEFAULTS.backoffFloorMs);
+	const ceilingRaw = parsePositiveInt(env.DOCTOR_BACKOFF_CEILING_MS, DEFAULTS.backoffCeilingMs);
 	// Normalize: a ceiling below the floor is incoherent; clamp it up to the floor.
 	const ceiling = ceilingRaw < floor ? floor : ceilingRaw;
 
-	const workspaceRaw = env.HIVEDOCTOR_WORKSPACE_DIR;
+	const workspaceRaw = env.DOCTOR_WORKSPACE_DIR;
 	const pidRaw = env.HONEYCOMB_DAEMON_PID_PATH;
 
 	return {
-		probeIntervalMs: parsePositiveInt(env.HIVEDOCTOR_PROBE_INTERVAL_MS, DEFAULTS.probeIntervalMs),
-		probeTimeoutMs: parsePositiveInt(env.HIVEDOCTOR_PROBE_TIMEOUT_MS, DEFAULTS.probeTimeoutMs),
-		startupGraceMs: parsePositiveInt(env.HIVEDOCTOR_STARTUP_GRACE_MS, DEFAULTS.startupGraceMs),
-		healthUrl: parseHealthUrl(env.HIVEDOCTOR_HEALTH_URL, DEFAULTS.healthUrl),
-		statusPagePort: parsePort(env.HIVEDOCTOR_STATUS_PAGE_PORT, DEFAULTS.statusPagePort),
+		probeIntervalMs: parsePositiveInt(env.DOCTOR_PROBE_INTERVAL_MS, DEFAULTS.probeIntervalMs),
+		probeTimeoutMs: parsePositiveInt(env.DOCTOR_PROBE_TIMEOUT_MS, DEFAULTS.probeTimeoutMs),
+		startupGraceMs: parsePositiveInt(env.DOCTOR_STARTUP_GRACE_MS, DEFAULTS.startupGraceMs),
+		healthUrl: parseHealthUrl(env.DOCTOR_HEALTH_URL, DEFAULTS.healthUrl),
+		statusPagePort: parsePort(env.DOCTOR_STATUS_PAGE_PORT, DEFAULTS.statusPagePort),
 		backoffFloorMs: floor,
 		backoffCeilingMs: ceiling,
-		restartGiveUpThreshold: parsePositiveInt(env.HIVEDOCTOR_RESTART_GIVE_UP, DEFAULTS.restartGiveUpThreshold),
-		restartCooldownMs: parseNonNegativeInt(env.HIVEDOCTOR_RESTART_COOLDOWN_MS, DEFAULTS.restartCooldownMs),
-		installHealthIntervalMs: parsePositiveInt(env.HIVEDOCTOR_INSTALL_HEALTH_INTERVAL_MS, DEFAULTS.installHealthIntervalMs),
+		restartGiveUpThreshold: parsePositiveInt(env.DOCTOR_RESTART_GIVE_UP, DEFAULTS.restartGiveUpThreshold),
+		restartCooldownMs: parseNonNegativeInt(env.DOCTOR_RESTART_COOLDOWN_MS, DEFAULTS.restartCooldownMs),
+		installHealthIntervalMs: parsePositiveInt(env.DOCTOR_INSTALL_HEALTH_INTERVAL_MS, DEFAULTS.installHealthIntervalMs),
 		workspaceDir: workspaceRaw !== undefined && workspaceRaw.trim() !== "" ? workspaceRaw.trim() : defaultWorkspace,
 		daemonPidPath: pidRaw !== undefined && pidRaw.trim() !== "" ? pidRaw.trim() : defaultPidPath,
 	};

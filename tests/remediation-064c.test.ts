@@ -24,7 +24,7 @@ const BLESSED = "0.1.9";
 let dir: string;
 let clock = 0;
 beforeEach(() => {
-	dir = mkdtempSync(join(tmpdir(), "hivedoctor-064c-"));
+	dir = mkdtempSync(join(tmpdir(), "doctor-064c-"));
 	clock = 1_700_000_000_000;
 });
 afterEach(() => {

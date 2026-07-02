@@ -1,6 +1,6 @@
-// HiveDoctor's OWN per-target bundler (PRD-063 INT-1).
+// Doctor's OWN per-target bundler (PRD-063 INT-1).
 //
-// HiveDoctor ships as a SEPARATE, dependency-light npm package
+// Doctor ships as a SEPARATE, dependency-light npm package
 // (`@legioncodeinc/doctor`, PRD-063 OD-6) with its OWN build, gates, and
 // release job. This config is the analogue of the repo-root esbuild.config.mjs,
 // scoped to this one package: it consumes the modular ESM `tsc` emits under
@@ -10,7 +10,7 @@
 // Mirrored conventions (kept deliberately identical to the parent so the two
 // builds read the same):
 //  - platform: "node", format: "esm" (the package is strict ESM, Node >=22).
-//  - Node built-ins (`node:*`) are the ONLY externals. HiveDoctor's binding
+//  - Node built-ins (`node:*`) are the ONLY externals. Doctor's binding
 //     design principle is ZERO runtime npm dependencies (Node built-ins only),
 //     so there is nothing else to externalize: the whole reachable graph is
 //     either first-party TypeScript or a node builtin, and esbuild bundles all
@@ -24,7 +24,7 @@
 //     marker package.json is stamped beside the bundle.
 //
 // Single source of truth for the injected version: THIS package's package.json
-// `version`. esbuild reads it here and substitutes it for `__HIVEDOCTOR_VERSION__`
+// `version`. esbuild reads it here and substitutes it for `__DOCTOR_VERSION__`
 // into the bundle - the same single-sourcing discipline the parent uses
 // (sync-versions + define), but local to this independent package (it never
 // auto-updates its own version, PRD-063 AC-6, so there is no cross-manifest
@@ -36,8 +36,8 @@ import { chmodSync, writeFileSync, readFileSync } from "node:fs";
 const ESM_PACKAGE_JSON = '{"type":"module"}\n';
 
 // The injected version: this package's own package.json version (NOT the root
-// honeycomb version - HiveDoctor versions independently, OD-6).
-const HIVEDOCTOR_VERSION = JSON.parse(readFileSync("package.json", "utf-8")).version;
+// honeycomb version - Doctor versions independently, OD-6).
+const DOCTOR_VERSION = JSON.parse(readFileSync("package.json", "utf-8")).version;
 
 // Build-time PostHog destination, mirroring the parent's PRD-050e pattern: each
 // is sourced from a CI env var with a safe default and JSON.stringify'd into the
@@ -46,7 +46,7 @@ const HIVEDOCTOR_VERSION = JSON.parse(readFileSync("package.json", "utf-8")).ver
 // local/fork build that never sets these emits nothing. The key is a PUBLIC
 // write-only ingest key, embedded in the published tarball BY DESIGN; the CI
 // secret only keeps it out of logs and fork PRs. NO real key is ever committed
-// to source - it arrives ONLY via CI env at build time (release-hivedoctor.yaml).
+// to source - it arrives ONLY via CI env at build time (release-doctor.yaml).
 const HONEYCOMB_POSTHOG_KEY = process.env.HONEYCOMB_POSTHOG_KEY ?? "";
 const HONEYCOMB_POSTHOG_HOST = process.env.HONEYCOMB_POSTHOG_HOST ?? "https://us.i.posthog.com";
 
@@ -56,7 +56,7 @@ const HONEYCOMB_POSTHOG_HOST = process.env.HONEYCOMB_POSTHOG_HOST ?? "https://us
 // un-bundled dev/test run (no define) falls through to the env/sentinel path, so
 // `tsc --noEmit` and `vitest run` stay green without a bundle present.
 const DEFINE = {
-	__HIVEDOCTOR_VERSION__: JSON.stringify(HIVEDOCTOR_VERSION),
+	__DOCTOR_VERSION__: JSON.stringify(DOCTOR_VERSION),
 	__HONEYCOMB_POSTHOG_KEY__: JSON.stringify(HONEYCOMB_POSTHOG_KEY),
 	__HONEYCOMB_POSTHOG_HOST__: JSON.stringify(HONEYCOMB_POSTHOG_HOST),
 };
@@ -85,7 +85,7 @@ await build({
 	// ESM-bundle require shim, same rationale as the parent daemon bundle: if any
 	// transitively-bundled module performs a CJS `require`, esbuild's ESM output
 	// otherwise replaces it with a shim that THROWS. A real `require` via
-	// createRequire keeps such a path working. HiveDoctor is built-ins-only so
+	// createRequire keeps such a path working. Doctor is built-ins-only so
 	// this is belt-and-suspenders, but it is cheap and matches parent discipline.
 	banner: {
 		js: "import { createRequire as __cr } from 'node:module'; const require = __cr(import.meta.url);",
@@ -104,4 +104,4 @@ writeFileSync("bundle/package.json", ESM_PACKAGE_JSON);
 // Status to stderr (not stdout) so a caller parsing `npm pack --json` (e.g.
 // scripts/pack-check.mjs runs build via prepack) never gets log noise mixed into
 // its JSON data pipe - same discipline as the parent build.
-console.error(`Built: hivedoctor bin -> bundle/cli.js @ ${HIVEDOCTOR_VERSION}`);
+console.error(`Built: doctor bin -> bundle/cli.js @ ${DOCTOR_VERSION}`);

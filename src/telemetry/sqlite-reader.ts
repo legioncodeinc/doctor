@@ -1,8 +1,8 @@
 /**
- * Read-only SQLite access over one service's telemetry database (hivedoctor PRD-001b/001c,
+ * Read-only SQLite access over one service's telemetry database (doctor PRD-001b/001c,
  * ADR-0001 decision 4).
  *
- * hivedoctor NEVER creates or writes these tables -- creation and writes are each
+ * doctor NEVER creates or writes these tables -- creation and writes are each
  * service's own job in its own repo (the pinned "Contract B" schema in the-apiary's
  * `library/ledger/EXECUTION_LEDGER.md`). This module only opens the database READ-ONLY
  * and runs windowed, schema-tolerant SELECTs against the three tables the contract

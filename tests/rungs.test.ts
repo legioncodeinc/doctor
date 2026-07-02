@@ -27,7 +27,7 @@ const BLESSED = "0.1.9";
 
 let dir: string;
 beforeEach(() => {
-	dir = mkdtempSync(join(tmpdir(), "hivedoctor-rungs-"));
+	dir = mkdtempSync(join(tmpdir(), "doctor-rungs-"));
 });
 afterEach(() => {
 	rmSync(dir, { recursive: true, force: true });

@@ -14,7 +14,7 @@
  * depends on the daemon mounting a route that reads `needs-attention.json`. That
  * route has not been authored yet (it is a future task in the dashboard integration
  * wave). These tests assert the FILE SHAPE the dashboard will read, which is the
- * complete 064g contract on the HiveDoctor side.
+ * complete 064g contract on the Doctor side.
  */
 
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
@@ -147,7 +147,7 @@ describe("AC-064g.2: read-seam file shape after escalation (dashboard integratio
 	 * BLOCKER: The live dashboard render of the needs-attention banner requires a
 	 * daemon route that reads this file. That route has not been authored yet and is
 	 * a future task in the dashboard integration wave. These tests assert the FILE
-	 * SHAPE the dashboard will read -- the full 064g contract from HiveDoctor's side.
+	 * SHAPE the dashboard will read -- the full 064g contract from Doctor's side.
 	 */
 	it("read() returns the escalation record with resolved:false before recovery", () => {
 		const store = makeStore();

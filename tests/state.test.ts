@@ -12,7 +12,7 @@ import { createStateStore, DEFAULT_STATE, mergeState } from "../src/state.js";
 let dir: string;
 
 beforeEach(() => {
-	dir = mkdtempSync(join(tmpdir(), "hivedoctor-state-"));
+	dir = mkdtempSync(join(tmpdir(), "doctor-state-"));
 });
 afterEach(() => {
 	rmSync(dir, { recursive: true, force: true });

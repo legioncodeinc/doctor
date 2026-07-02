@@ -10,7 +10,7 @@
  *     installed a version, failed verify, and rolled back).
  *   - `applyPrimaryUpdate` (`update`) runs the real {@link UpdateEngine.runUpdateTransaction}
  *     (acquire lock -> npm install -> restart -> verify -> commit/rollback).
- *   - `selfUpdate` is passed straight through (the SOLE HiveDoctor-own-package path, AC-064f.5).
+ *   - `selfUpdate` is passed straight through (the SOLE Doctor-own-package path, AC-064f.5).
  *
  * Built-ins only; pure string formatting over the injected engine.
  */
@@ -18,7 +18,7 @@
 import type { UpdateActions } from "./context.js";
 import { outcomeOf, type UpdateEngine } from "../update/update-engine.js";
 
-/** The self-update action (the one path that updates HiveDoctor's own package). */
+/** The self-update action (the one path that updates Doctor's own package). */
 export type SelfUpdateFn = () => Promise<string>;
 
 /**

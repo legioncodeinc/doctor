@@ -16,7 +16,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { DEFAULT_STATE, type HiveDoctorState, type StateStore } from "../../src/state.js";
+import { DEFAULT_STATE, type DoctorState, type StateStore } from "../../src/state.js";
 import {
 	CAPTURE_ALLOWED_PROPERTY_KEYS,
 	POSTHOG_CAPTURE_PATH,
@@ -64,12 +64,12 @@ function testCaptureDeps(overrides: Partial<CaptureDeps> = {}): CaptureDeps {
 }
 
 /** An in-memory StateStore fake recording every write (no disk). */
-function memoryStateStore(initial: Partial<HiveDoctorState> = {}) {
-	let state: HiveDoctorState = { ...DEFAULT_STATE, ...initial };
-	const writes: HiveDoctorState[] = [];
+function memoryStateStore(initial: Partial<DoctorState> = {}) {
+	let state: DoctorState = { ...DEFAULT_STATE, ...initial };
+	const writes: DoctorState[] = [];
 	const store: StateStore = {
 		read: () => state,
-		write: (next: HiveDoctorState) => {
+		write: (next: DoctorState) => {
 			state = next;
 			writes.push(next);
 		},
@@ -105,7 +105,7 @@ function distinctIdPresent() {
 
 /** Build a lifecycle emitter over the fakes. Returns the recorder handles too. */
 function buildLifecycle(options: {
-	readonly initialState?: Partial<HiveDoctorState>;
+	readonly initialState?: Partial<DoctorState>;
 	readonly captureOverrides?: Partial<CaptureDeps>;
 	readonly installIdPresent?: boolean;
 } = {}) {
@@ -198,9 +198,9 @@ describe("capture payload shape", () => {
 		expect(call.init.headers["Content-Type"]).toBe("application/json");
 		const body = parseBody(call.init);
 		expect(body.api_key).toBe(FAKE_KEY);
-		expect(body.event).toBe("hivedoctor_installed");
+		expect(body.event).toBe("doctor_installed");
 		expect(body.distinct_id).toBe(FAKE_DEVICE_ID);
-		expect(body.properties["package"]).toBe("hivedoctor");
+		expect(body.properties["package"]).toBe("doctor");
 		expect(body.properties["version"]).toBe(FAKE_VERSION);
 		expect(typeof body.properties["os"]).toBe("string");
 		expect(typeof body.properties["arch"]).toBe("string");
@@ -230,13 +230,13 @@ describe("capture payload shape", () => {
 		}
 	});
 
-	it("hivedoctor_updated carries from_version/to_version/outcome", async () => {
+	it("doctor_updated carries from_version/to_version/outcome", async () => {
 		const { lifecycle, calls } = buildLifecycle();
 		await lifecycle.updated("0.1.7", "0.1.9", "updated");
 		const call = calls[0];
 		if (!call) throw new Error("no call");
 		const body = parseBody(call.init);
-		expect(body.event).toBe("hivedoctor_updated");
+		expect(body.event).toBe("doctor_updated");
 		expect(body.properties["from_version"]).toBe("0.1.7");
 		expect(body.properties["to_version"]).toBe("0.1.9");
 		expect(body.properties["outcome"]).toBe("updated");
@@ -381,7 +381,7 @@ describe("fail-soft posture", () => {
 			throw new Error("ECONNREFUSED");
 		};
 		const outcome = await emitCaptureEvent(
-			"hivedoctor_uninstalled",
+			"doctor_uninstalled",
 			buildCaptureProperties({ version: FAKE_VERSION }),
 			FAKE_DEVICE_ID,
 			testCaptureDeps({ fetch: throwingFetch }),
@@ -395,7 +395,7 @@ describe("fail-soft posture", () => {
 			throw new TypeError("fetch is not a function");
 		};
 		const outcome = await emitCaptureEvent(
-			"hivedoctor_installed",
+			"doctor_installed",
 			buildCaptureProperties({ version: FAKE_VERSION }),
 			FAKE_DEVICE_ID,
 			testCaptureDeps({ fetch: brokenFetch }),

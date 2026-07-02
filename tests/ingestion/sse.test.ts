@@ -176,7 +176,7 @@ describe("handleSseRequest (PRD-002a)", () => {
 			asOf: "2026-07-01T18:00:00.000Z",
 			services: [
 				{ name: "honeycomb", health: "ok", lastSeen: "2026-07-01T18:00:00.000Z", metrics: { actionsTaken: 1 }, deeplake: null, telemetryFault: null },
-				{ name: "hivenectar", health: "degraded", lastSeen: null, metrics: {}, deeplake: null, telemetryFault: "missing" },
+				{ name: "nectar", health: "degraded", lastSeen: null, metrics: {}, deeplake: null, telemetryFault: "missing" },
 			],
 			logs: [],
 		};
@@ -186,8 +186,8 @@ describe("handleSseRequest (PRD-002a)", () => {
 		const { frame, req } = await readOneFrame(port);
 		const dataLine = frame.split("\n").find((line) => line.startsWith("data: ")) as string;
 		const payload = JSON.parse(dataLine.slice("data: ".length)) as FleetTelemetryEvent;
-		expect(payload.services.find((s) => s.name === "hivenectar")).toEqual({
-			name: "hivenectar",
+		expect(payload.services.find((s) => s.name === "nectar")).toEqual({
+			name: "nectar",
 			health: "degraded",
 			lastSeen: null,
 			metrics: {},

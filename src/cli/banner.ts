@@ -1,5 +1,5 @@
 /**
- * The HiveDoctor banner + command menu (PRD-064f AC-064f.1 / parent AC-7).
+ * The Doctor banner + command menu (PRD-064f AC-064f.1 / parent AC-7).
  *
  * A clean attribution banner - the Legion Code Inc. and Activeloop wordmarks with a
  * collaboration line - rendered on bare invocation, followed by a focused command menu.
@@ -16,7 +16,7 @@
 
 import type { Colors } from "./colors.js";
 import { COMMAND_MENU } from "./command-table.js";
-import { HIVEDOCTOR_VERSION } from "../version.js";
+import { DOCTOR_VERSION } from "../version.js";
 
 /**
  * The attribution banner: the two wordmarks (with monogram marks) on one ruled line,
@@ -31,20 +31,20 @@ const ART = String.raw`
 `;
 
 /** Product identity line shown beneath the collaboration banner. */
-const NAME = "HiveDoctor";
+const NAME = "Doctor";
 
 /** Build the full banner: collaboration banner + product name + version. Pure; colorized via `colors`. */
 export function renderBanner(colors: Colors): string {
 	const art = colors.amber(ART.replace(/^\n/, ""));
 	const name = colors.bold(NAME);
-	const version = colors.dim(`v${HIVEDOCTOR_VERSION}`);
+	const version = colors.dim(`v${DOCTOR_VERSION}`);
 	return `${art}\n${name}  ${version}\n`;
 }
 
 /** Build the command-menu block from the single-sourced command table. Pure. */
 export function renderMenu(colors: Colors): string {
 	const header = colors.bold("Usage:");
-	const usage = `  ${colors.cyan("hivedoctor")} ${colors.dim("<command> [options]")}`;
+	const usage = `  ${colors.cyan("doctor")} ${colors.dim("<command> [options]")}`;
 	const commandsHeader = colors.bold("Commands:");
 
 	// Right-pad the command column so the descriptions align.

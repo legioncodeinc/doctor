@@ -49,7 +49,7 @@ export interface ReinstallRungDeps {
 	/** The shared install mutex, so reinstall + auto-update never run concurrently. */
 	readonly installLock: InstallLock;
 	/**
-	 * The version HiveDoctor expects after a good install (single-sourced from the blessed
+	 * The version Doctor expects after a good install (single-sourced from the blessed
 	 * channel). An empty string means "no blessed version known" (the channel is unreachable
 	 * until B-3 ships the CDN object); in that case the rung still reinstalls but degrades the
 	 * verify step to a fail-soft "cannot verify" instead of a hard failure.

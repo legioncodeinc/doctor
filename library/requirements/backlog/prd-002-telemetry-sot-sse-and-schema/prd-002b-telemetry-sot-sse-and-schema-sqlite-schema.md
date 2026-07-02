@@ -4,13 +4,13 @@
 > **Parent:** [PRD-002: Telemetry source-of-truth SSE stream and schema](./prd-002-telemetry-sot-sse-and-schema-index.md)
 > **Priority:** P0
 > **Effort:** M (3-8h)
-> **Schema changes:** Additive (the metrics and log tables/columns services write and hivedoctor reads)
+> **Schema changes:** Additive (the metrics and log tables/columns services write and doctor reads)
 
 ---
 
 ## Overview
 
-Define the SQLite schema that is the contract between each service (writer) and hivedoctor (reader), per [`ADR-0001`](../../../knowledge/private/architecture/ADR-0001-hive-telemetry-transport-and-single-source-of-truth.md). This sub-PRD specifies the metrics columns, the log table and its verbosity level, and the Deep Lake connection and stats fields that flow onto the SSE stream (002a). ADR-0001 explicitly names this as a contract whose drift must be handled additively.
+Define the SQLite schema that is the contract between each service (writer) and doctor (reader), per [`ADR-0001`](../../../knowledge/private/architecture/ADR-0001-hive-telemetry-transport-and-single-source-of-truth.md). This sub-PRD specifies the metrics columns, the log table and its verbosity level, and the Deep Lake connection and stats fields that flow onto the SSE stream (002a). ADR-0001 explicitly names this as a contract whose drift must be handled additively.
 
 The concrete metrics to capture are the ones the portal needs: actions taken, files processed, and memories created since last restart. Logs are written live by services (ADR-0001 decision 1) with a selectable verbosity level so the portal can filter. Deep Lake fields cover connection state and stats such as last-communication time. This schema pairs with the runtime status/check-in contract in [PRD-001b](../prd-001-service-registration-and-telemetry-ingestion/prd-001b-service-registration-and-telemetry-ingestion-runtime-sqlite-contract.md); 001b says when and how a service checks in, 002b says what the metric and log rows look like.
 
@@ -34,7 +34,7 @@ The concrete metrics to capture are the ones the portal needs: actions taken, fi
 
 ## User stories
 
-- As a service, I write my metrics and logs into columns hivedoctor already knows how to read, so adding telemetry needs no hivedoctor code change.
+- As a service, I write my metrics and logs into columns doctor already knows how to read, so adding telemetry needs no doctor code change.
 - As the portal, I render actions taken, files processed, and memories created since last restart, and I filter logs by verbosity.
 - As an operator, I see whether a service's Deep Lake connection is alive and when it last communicated.
 
@@ -69,7 +69,7 @@ Exact table and column names are settled in implementation; the contract is that
 | last-communication time | when the service last successfully communicated with Deep Lake |
 | stats | additional non-sensitive connection statistics |
 
-All tables are opened read-only by hivedoctor in WAL mode.
+All tables are opened read-only by doctor in WAL mode.
 
 ---
 
@@ -82,14 +82,14 @@ All tables are opened read-only by hivedoctor in WAL mode.
 | b-AC-3 | Given the Deep Lake stats schema, when a service reports, then connection state and last-communication time are recorded. |
 | b-AC-4 | Given a schema change, when a new column is needed, then it is added additively without breaking existing readers or writers. |
 | b-AC-5 | Given any metrics, log, or Deep Lake row, when persisted, then it contains no tokens, credentials, org secrets, or Deep Lake data payloads. |
-| b-AC-6 | Given the schema, when hivedoctor reads it, then all reads are read-only against WAL-mode databases. |
+| b-AC-6 | Given the schema, when doctor reads it, then all reads are read-only against WAL-mode databases. |
 
 ---
 
 ## Implementation notes
 
-- Additive-only schema evolution mirrors the honeycomb daemon's healing convention (never a hand-rolled destructive `ALTER`); services own their writers, hivedoctor owns the reader.
-- "Since last restart" needs a stable anchor (run id or process start time) so counters reset cleanly on restart without hivedoctor guessing.
+- Additive-only schema evolution mirrors the honeycomb daemon's healing convention (never a hand-rolled destructive `ALTER`); services own their writers, doctor owns the reader.
+- "Since last restart" needs a stable anchor (run id or process start time) so counters reset cleanly on restart without doctor guessing.
 - Verbosity is stored as a discrete level so 002a can forward it and the portal can filter without re-parsing message text.
 
 ---

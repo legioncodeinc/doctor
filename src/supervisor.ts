@@ -1,8 +1,8 @@
 /**
- * HiveDoctor supervisor - the watch loop (PRD-064a, the beating heart).
+ * Doctor supervisor - the watch loop (PRD-064a, the beating heart).
  *
  * Ties the pieces together: probe -> classify -> (heal via backoff + remediation
- * ladder) -> incident log, persisting state across HiveDoctor restarts. It is
+ * ladder) -> incident log, persisting state across Doctor restarts. It is
  * crash-safe by construction (design principle 1, "incapable of crashing"): every
  * probe and every remediation runs inside try/catch, and {@link installCrashNet}
  * adds the last-resort `uncaughtException`/`unhandledRejection` net that logs and
@@ -28,7 +28,7 @@ import { triggerForClassification } from "./incidents.js";
 import type { Logger } from "./logger.js";
 import type { RemediationLadder, RungContext } from "./remediation.js";
 import { buildEscalationRecord } from "./remediation.js";
-import type { HiveDoctorState, StateStore } from "./state.js";
+import type { DoctorState, StateStore } from "./state.js";
 
 /** Injected clock + scheduler so tests drive time deterministically. */
 export interface SupervisorClock {
@@ -134,7 +134,7 @@ export function installCrashNet(logger: Logger, onError?: ErrorSink): () => void
 }
 
 /** Map a classification kind to the coarse health string persisted in state.json. */
-function coarseHealth(kind: HealthClassification["kind"]): HiveDoctorState["lastKnownHealth"] {
+function coarseHealth(kind: HealthClassification["kind"]): DoctorState["lastKnownHealth"] {
 	if (kind === "ok") return "ok";
 	if (kind === "degraded") return "degraded";
 	return "unreachable";
@@ -180,9 +180,9 @@ export function createSupervisor(deps: SupervisorDeps): Supervisor {
 	 */
 	async function heal(
 		classification: HealthClassification,
-		state: HiveDoctorState,
+		state: DoctorState,
 		incident: IncidentBuilder,
-	): Promise<HiveDoctorState> {
+	): Promise<DoctorState> {
 		const decision = deps.ladder.decide(state.consecutiveRestartFailures);
 		const ctx: RungContext = { classification, logger: deps.logger };
 

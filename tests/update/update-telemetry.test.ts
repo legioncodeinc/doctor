@@ -75,7 +75,7 @@ describe("createDefaultUpdateEmit (AC-064e.5)", () => {
 });
 
 // ────────────────────────────────────────────────────────────────────────────
-// The ADDITIVE hivedoctor_updated capture leg (lifecycle telemetry)
+// The ADDITIVE doctor_updated capture leg (lifecycle telemetry)
 // ────────────────────────────────────────────────────────────────────────────
 
 /** A lifecycle recorder stub capturing every updated() call. */
@@ -102,7 +102,7 @@ function lifecycleRecorder(options: { throwOnUpdated?: boolean } = {}): {
 	};
 }
 
-describe("createDefaultUpdateEmit: additive hivedoctor_updated capture leg", () => {
+describe("createDefaultUpdateEmit: additive doctor_updated capture leg", () => {
 	const emitDeps = { posthogKey: "test-key", posthogHost: "https://telemetry.test", env: {} };
 
 	it("fires lifecycle.updated on a successful 'updated' outcome AND keeps the OTLP log", async () => {

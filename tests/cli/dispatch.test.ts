@@ -22,7 +22,7 @@ describe("dispatch (PRD-064f)", () => {
 			// The attribution banner carries both wordmarks.
 			expect(text).toContain("LEGION CODE INC.");
 			expect(text).toContain("ACTIVELOOP");
-			expect(text).toContain("HiveDoctor");
+			expect(text).toContain("Doctor");
 			// The menu: a sampling of commands must be listed.
 			expect(text).toContain("status");
 			expect(text).toContain("diagnose");
@@ -63,11 +63,11 @@ describe("dispatch (PRD-064f)", () => {
 			const text = h.out.text();
 			expect(text).toContain("Daemon health:");
 			expect(text).toContain("degraded");
-			expect(text).toContain("HiveDoctor service:");
+			expect(text).toContain("Doctor service:");
 			expect(text).toContain("running");
 			expect(text).toContain("Daemon version:");
 			expect(text).toContain("1.2.3");
-			expect(text).toContain("HiveDoctor version:");
+			expect(text).toContain("Doctor version:");
 			expect(text).toContain("9.9.9-test");
 			expect(text).toContain("Last heal:");
 			expect(text).toContain("2026-06-27T00:00:00.000Z");
@@ -86,13 +86,13 @@ describe("dispatch (PRD-064f)", () => {
 						statusState: { lastHealAt: "2026-07-01T00:00:00.000Z", lastKnownHealth: "ok" },
 					},
 					{
-						name: "thehive",
+						name: "hive",
 						classification: { kind: "degraded", reasons: { storage: "slow" } },
 						daemonVersion: "2.0.0",
 						statusState: { lastHealAt: null, lastKnownHealth: "degraded" },
 					},
 					{
-						name: "hivenectar",
+						name: "nectar",
 						classification: { kind: "ok" },
 						daemonVersion: "3.0.0",
 						statusState: { lastHealAt: "2026-07-01T00:05:00.000Z", lastKnownHealth: "ok" },
@@ -103,8 +103,8 @@ describe("dispatch (PRD-064f)", () => {
 			expect(code).toBe(EXIT_OK);
 			const text = h.out.text();
 			expect(text).toContain("Daemon: honeycomb");
-			expect(text).toContain("Daemon: thehive");
-			expect(text).toContain("Daemon: hivenectar");
+			expect(text).toContain("Daemon: hive");
+			expect(text).toContain("Daemon: nectar");
 			expect(text).toContain("Auto-update:");
 		});
 
@@ -118,7 +118,7 @@ describe("dispatch (PRD-064f)", () => {
 						statusState: { lastHealAt: "2026-07-01T00:00:00.000Z", lastKnownHealth: "ok" },
 					},
 					{
-						name: "thehive",
+						name: "hive",
 						classification: { kind: "unreachable-timeout" },
 						daemonVersion: null,
 						statusState: { lastHealAt: null, lastKnownHealth: "unreachable" },
@@ -129,7 +129,7 @@ describe("dispatch (PRD-064f)", () => {
 			expect(code).toBe(EXIT_OK);
 			const text = h.out.text();
 			expect(text).toContain("Daemon: honeycomb");
-			expect(text).toContain("Daemon: thehive");
+			expect(text).toContain("Daemon: hive");
 			expect(text).toContain("unreachable (timed out / wedged)");
 			expect(text).toContain("unknown (daemon unreachable)");
 		});
@@ -202,7 +202,7 @@ describe("dispatch (PRD-064f)", () => {
 		});
 	});
 
-	describe("AC-064f.5: self-update is the ONLY path that updates HiveDoctor's own package", () => {
+	describe("AC-064f.5: self-update is the ONLY path that updates Doctor's own package", () => {
 		it("`self-update` calls the self-update action", async () => {
 			const h = buildCliHarness();
 			const code = await dispatch(["self-update"], h.ctx);
@@ -318,10 +318,10 @@ describe("dispatch (PRD-064f)", () => {
 			const h = buildCliHarness({
 				incidentsByDaemon: {
 					honeycomb: ['{"id":"h1"}'],
-					thehive: ['{"id":"t1"}'],
+					hive: ['{"id":"t1"}'],
 				},
 			});
-			const code = await dispatch(["logs", "--daemon", "thehive"], h.ctx);
+			const code = await dispatch(["logs", "--daemon", "hive"], h.ctx);
 			expect(code).toBe(EXIT_OK);
 			const text = h.out.text();
 			expect(text).toContain('{"id":"t1"}');
@@ -332,14 +332,14 @@ describe("dispatch (PRD-064f)", () => {
 			const h = buildCliHarness({
 				incidentsByDaemon: {
 					honeycomb: ['{"id":"h1"}'],
-					thehive: ['{"id":"t1"}'],
+					hive: ['{"id":"t1"}'],
 				},
 			});
 			const code = await dispatch(["logs"], h.ctx);
 			expect(code).toBe(EXIT_OK);
 			const text = h.out.text();
 			expect(text).toContain('[honeycomb] {"id":"h1"}');
-			expect(text).toContain('[thehive] {"id":"t1"}');
+			expect(text).toContain('[hive] {"id":"t1"}');
 		});
 	});
 });

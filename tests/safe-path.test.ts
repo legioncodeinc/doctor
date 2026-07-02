@@ -17,7 +17,7 @@ describe("resolveInBase", () => {
 	let base: string;
 
 	beforeEach(() => {
-		base = mkdtempSync(join(tmpdir(), "hivedoctor-safe-path-"));
+		base = mkdtempSync(join(tmpdir(), "doctor-safe-path-"));
 	});
 	afterEach(() => {
 		rmSync(base, { recursive: true, force: true });

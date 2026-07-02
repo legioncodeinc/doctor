@@ -1,5 +1,5 @@
 /**
- * The `hivedoctor` CLI entry point (PRD-064f - the bin target).
+ * The `doctor` CLI entry point (PRD-064f - the bin target).
  *
  * Builds the PRODUCTION {@link CliContext} - real stdout/stderr, a readline confirm
  * prompt, and live injected deps wired from the resolved config + the same primitives the
@@ -11,13 +11,13 @@
  * work with the daemon down (AC-064f.6).
  *
  * Built-ins only: node:readline/promises for the confirm prompt, node:process for argv +
- * streams. The `self-update` action is the SOLE path wired to HiveDoctor's own package.
+ * streams. The `self-update` action is the SOLE path wired to Doctor's own package.
  */
 
 import { createInterface } from "node:readline/promises";
 import { homedir } from "node:os";
 
-import { createHiveDoctor } from "../compose/index.js";
+import { createDoctor } from "../compose/index.js";
 import { resolveConfig } from "../config.js";
 import { resolveDeviceId } from "../device-id.js";
 import { probeHealth } from "../health-probe.js";
@@ -41,7 +41,7 @@ import {
 	createUpdateEngine,
 	PRIMARY_PACKAGE,
 } from "../update/index.js";
-import { HIVEDOCTOR_VERSION } from "../version.js";
+import { DOCTOR_VERSION } from "../version.js";
 import { parseArgs, hasFlag } from "./arg-parse.js";
 import { createColors } from "./colors.js";
 import { readDaemonVersion } from "./daemon-version.js";
@@ -126,7 +126,7 @@ export function buildCliContext(argv: readonly string[]): CliContext {
 		}));
 	const installLock = createInstallLock({ workspaceDir: config.workspaceDir, logger });
 
-	// The SHARED per-install device id (PRD-033/064d): the daemon and HiveDoctor read/mint the
+	// The SHARED per-install device id (PRD-033/064d): the daemon and Doctor read/mint the
 	// same ~/.honeycomb/device.json so every telemetry stream correlates to one install.
 	// resolveDeviceId never throws; the try/catch keeps "unknown-device" as the last-resort net.
 	let deviceId = "unknown-device";
@@ -179,8 +179,8 @@ export function buildCliContext(argv: readonly string[]): CliContext {
 
 	const optOut = resolveOptOut({ cliNoAutoUpdate: hasFlag(parseArgs(argv), "no-auto-update"), env });
 
-	// The lifecycle capture-event emitter (hivedoctor_installed / _updated / _uninstalled):
-	// dedupe markers live in hivedoctor's own un-sharded state.json; distinct_id prefers the
+	// The lifecycle capture-event emitter (doctor_installed / _updated / _uninstalled):
+	// dedupe markers live in doctor's own un-sharded state.json; distinct_id prefers the
 	// shared installer id (~/.honeycomb/install-id) with the resolved device id as fallback.
 	// Every method is gated (empty key / DO_NOT_TRACK / HONEYCOMB_TELEMETRY=0) + fail-soft.
 	const lifecycle = createLifecycleTelemetry({
@@ -215,9 +215,9 @@ export function buildCliContext(argv: readonly string[]): CliContext {
 	// The real 064b OS-service module. The unit it registers execs `node <this-script> run`,
 	// so the exec path is the running CLI script (process.argv[1]); the bundled bin resolves to
 	// the same path under a global install. Userland scope is the default; an operator opts into
-	// a system unit via HIVEDOCTOR_SERVICE_SYSTEM=1 (the enterprise path, parent index ruling).
-	const serviceExecPath = process.argv[1] ?? "hivedoctor";
-	const preferSystemScope = (env["HIVEDOCTOR_SERVICE_SYSTEM"] ?? "") === "1";
+	// a system unit via DOCTOR_SERVICE_SYSTEM=1 (the enterprise path, parent index ruling).
+	const serviceExecPath = process.argv[1] ?? "doctor";
+	const preferSystemScope = (env["DOCTOR_SERVICE_SYSTEM"] ?? "") === "1";
 	const serviceModule = createServiceModule({ execPath: serviceExecPath, preferSystemScope, runner, logger });
 
 	const rungContextFor = (classification: HealthClassification): RungContext => ({ classification, logger });
@@ -230,7 +230,7 @@ export function buildCliContext(argv: readonly string[]): CliContext {
 			probe,
 			statusDaemons,
 			readDaemonVersion: readDaemonVersionFn,
-			hivedoctorVersion: HIVEDOCTOR_VERSION,
+			doctorVersion: DOCTOR_VERSION,
 			ladder,
 			rungContextFor,
 			decideRung: (n) => ladder.decide(n),
@@ -271,7 +271,7 @@ export function buildCliContext(argv: readonly string[]): CliContext {
  */
 async function runWatchdog(argv: readonly string[]): Promise<number> {
 	const cliNoAutoUpdate = hasFlag(parseArgs(argv), "no-auto-update");
-	const doctor = createHiveDoctor({ cliNoAutoUpdate });
+	const doctor = createDoctor({ cliNoAutoUpdate });
 	await doctor.start();
 	// Keep `run` alive even when optional referenced handles (notably the status page)
 	// fail to bind and all internal loop timers are deliberately unref'ed.
@@ -302,7 +302,7 @@ export async function runCli(argv: readonly string[]): Promise<number> {
 		return await dispatch(argv, ctx);
 	} catch (error) {
 		// Last-resort net: even a wiring error must not crash with a stack trace.
-		process.stderr.write(`hivedoctor: ${error instanceof Error ? error.message : "unexpected error"}\n`);
+		process.stderr.write(`doctor: ${error instanceof Error ? error.message : "unexpected error"}\n`);
 		return 1;
 	}
 }

@@ -1,7 +1,7 @@
 /**
- * The HiveDoctor composition root (PRD-064f - the production assembly).
+ * The Doctor composition root (PRD-064f - the production assembly).
  *
- * `createHiveDoctor()` constructs the WHOLE watchdog from the wave-built primitives and
+ * `createDoctor()` constructs the WHOLE watchdog from the wave-built primitives and
  * returns a `{ start, stop }` handle the OS service (064b/064h) execs. It wires:
  *
  *   - the supervisor watch loop (064a) over the real probe + the remediation ladder with
@@ -29,7 +29,7 @@ import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 
 import { createBackoff } from "../backoff.js";
-import { resolveConfig, type HiveDoctorConfig } from "../config.js";
+import { resolveConfig, type DoctorConfig } from "../config.js";
 import { resolveDeviceId } from "../device-id.js";
 import { defaultRegistryPath, readRegistryFile, RegistryError, type DaemonEntry } from "../registry.js";
 import { probeHealth } from "../health-probe.js";
@@ -82,7 +82,7 @@ import {
 	type UpdateEngine,
 	type UpdatePollLoop,
 } from "../update/index.js";
-import { HIVEDOCTOR_VERSION } from "../version.js";
+import { DOCTOR_VERSION } from "../version.js";
 import { resolveInBase } from "../safe-path.js";
 
 /**
@@ -129,12 +129,12 @@ async function defaultReadDaemonPid(pidPath: string): Promise<number | null> {
 }
 
 /**
- * Build the honeycomb primary registry entry from the resolved {@link HiveDoctorConfig}. This
+ * Build the honeycomb primary registry entry from the resolved {@link DoctorConfig}. This
  * is the a-AC-2 fallback used when no registry file is present: it preserves the existing
  * single-daemon behavior INCLUDING any env overrides `resolveConfig` applied (the six
  * per-daemon fields), rather than dropping back to bare built-in defaults.
  */
-function honeycombEntryFromConfig(config: HiveDoctorConfig): DaemonEntry {
+function honeycombEntryFromConfig(config: DoctorConfig): DaemonEntry {
 	return {
 		name: "honeycomb",
 		healthUrl: config.healthUrl,
@@ -263,19 +263,19 @@ interface ResolvedDaemons {
 /**
  * Resolve the supervised-daemon list (PRD-004a). Precedence:
  *   1. an explicitly-injected `daemons` list (tests drive the multi-daemon path hermetically);
- *   2. the registry file at `~/.honeycomb/hivedoctor.daemons.json` (one supervisor per entry);
+ *   2. the registry file at `~/.honeycomb/doctor.daemons.json` (one supervisor per entry);
  *   3. when that file is ABSENT, the single honeycomb primary entry derived from `config`
  *      (a-AC-2 - the registry is additive; a missing file must not wedge the watchdog).
  *
  * A present-but-MALFORMED registry file must NOT throw (PRD-004d "Failure handling"): throwing
- * would exit `createHiveDoctor` -> `runWatchdog` exits non-zero -> the OS service unit's restart
- * policy (launchd `KeepAlive` / systemd `Restart=always`) restarts hivedoctor straight into the
+ * would exit `createDoctor` -> `runWatchdog` exits non-zero -> the OS service unit's restart
+ * policy (launchd `KeepAlive` / systemd `Restart=always`) restarts doctor straight into the
  * same parse failure, i.e. a crash loop. Instead it falls back to the honeycomb primary at
  * defaults and returns a `registryProblem` the composition root surfaces (log + needs-attention).
  */
 function resolveDaemons(
-	options: CreateHiveDoctorOptions,
-	config: HiveDoctorConfig,
+	options: CreateDoctorOptions,
+	config: DoctorConfig,
 	home: string,
 ): ResolvedDaemons {
 	if (options.daemons !== undefined) return { daemons: [...options.daemons], registryProblem: null };
@@ -291,19 +291,19 @@ function resolveDaemons(
 	}
 }
 
-/** Options for {@link createHiveDoctor}. All have production defaults; tests inject seams. */
-export interface CreateHiveDoctorOptions {
+/** Options for {@link createDoctor}. All have production defaults; tests inject seams. */
+export interface CreateDoctorOptions {
 	/** Resolved config (default: {@link resolveConfig} over the real env + home). */
-	readonly config?: HiveDoctorConfig;
+	readonly config?: DoctorConfig;
 	/** The process env (for opt-out resolution). Defaults to `process.env`. */
 	readonly env?: NodeJS.ProcessEnv;
 	/**
-	 * The supervised-daemon registry (PRD-004a). When set, hivedoctor spawns one supervisor
+	 * The supervised-daemon registry (PRD-004a). When set, doctor spawns one supervisor
 	 * per entry from this list (tests inject it to drive the multi-daemon path hermetically).
 	 * When omitted, the registry file is read from disk, falling back to the honeycomb primary.
 	 */
 	readonly daemons?: readonly DaemonEntry[];
-	/** Override the registry file path read when `daemons` is omitted (default: `~/.honeycomb/hivedoctor.daemons.json`). */
+	/** Override the registry file path read when `daemons` is omitted (default: `~/.honeycomb/doctor.daemons.json`). */
 	readonly registryPath?: string;
 	/** Home directory for the default registry path (default: `homedir()`). */
 	readonly home?: string;
@@ -337,7 +337,7 @@ export interface CreateHiveDoctorOptions {
 	/** The status-page port (default {@link DEFAULT_STATUS_PAGE_PORT}). */
 	readonly statusPagePort?: number;
 
-	// ── Telemetry ingestion + SSE seams (hivedoctor PRD-001/PRD-002) ──────────────
+	// ── Telemetry ingestion + SSE seams (doctor PRD-001/PRD-002) ──────────────
 	/**
 	 * Override the telemetry poll-and-merge loop (PRD-001c). Default: the real loop
 	 * (`ingestion/poll-loop.ts`) built over the resolved daemon registry, the shared
@@ -392,8 +392,8 @@ export interface CreateHiveDoctorOptions {
 	readonly installHealthIntervalMs?: number;
 }
 
-/** The running HiveDoctor handle the OS service execs. */
-export interface HiveDoctor {
+/** The running Doctor handle the OS service execs. */
+export interface Doctor {
 	/** Arm every loop + the status page + the crash net. Fail-soft; never throws. */
 	start(): Promise<void>;
 	/** Disarm every loop + close the status page + remove the crash net. Idempotent. */
@@ -430,11 +430,11 @@ export interface HiveDoctor {
 }
 
 /**
- * Build the full production HiveDoctor assembly. Every collaborator is constructed here and
+ * Build the full production Doctor assembly. Every collaborator is constructed here and
  * wired together; the result starts the watch loop, the auto-update poll loop, and the
  * status page, all fail-soft. Returns a handle exposing the wired pieces for the smoke test.
  */
-export function createHiveDoctor(options: CreateHiveDoctorOptions = {}): HiveDoctor {
+export function createDoctor(options: CreateDoctorOptions = {}): Doctor {
 	const env = options.env ?? process.env;
 	const config = options.config ?? resolveConfig(env);
 	const logger = options.logger ?? createLogger({ level: options.logLevel ?? "info" });
@@ -477,7 +477,7 @@ export function createHiveDoctor(options: CreateHiveDoctorOptions = {}): HiveDoc
 		logger.error("registry.malformed_fallback", { registryPath, reason: registryProblem });
 		needsAttention.record(
 			buildEscalationRecord({
-				diagnosis: `The hivedoctor daemon registry at ${registryPath} is present but malformed (${registryProblem}). hivedoctor is supervising the honeycomb primary daemon at built-in defaults until the file is fixed; any other daemons listed in the registry are NOT being supervised.`,
+				diagnosis: `The doctor daemon registry at ${registryPath} is present but malformed (${registryProblem}). doctor is supervising the honeycomb primary daemon at built-in defaults until the file is fixed; any other daemons listed in the registry are NOT being supervised.`,
 				steps: [],
 				recommendedAction: "manual-intervention",
 				now: () => clock.now(),
@@ -544,7 +544,7 @@ export function createHiveDoctor(options: CreateHiveDoctorOptions = {}): HiveDoc
 			await emitEscalationToHostedSink({
 				escalation: record,
 				deviceId,
-				hivedoctorVersion: HIVEDOCTOR_VERSION,
+				doctorVersion: DOCTOR_VERSION,
 				daemonVersion,
 				logger,
 			});
@@ -552,9 +552,9 @@ export function createHiveDoctor(options: CreateHiveDoctorOptions = {}): HiveDoc
 	// PRD-004a isolation: `needsAttention` backs a SINGLE process-global `needs-attention.json`
 	// (the pre-existing honeycomb dashboard read seam, `escalation/needs-attention-store.ts`).
 	// It is not sharded per-daemon. Wiring EVERY entry's ladder to a hook that writes this same
-	// file would let a non-primary daemon's escalation (e.g. hivenectar giving up) silently
+	// file would let a non-primary daemon's escalation (e.g. nectar giving up) silently
 	// overwrite honeycomb's own escalation record - polluting honeycomb's dashboard banner AND
-	// the "honeycomb" row hivedoctor's own status page reads via `needsAttention.read()` below
+	// the "honeycomb" row doctor's own status page reads via `needsAttention.read()` below
 	// (b-AC-1/b-AC-2 require "that daemon's latest escalation", not another daemon's). Only the
 	// honeycomb entry writes to the shared file; every other entry's escalation step is already
 	// durably recorded in ITS OWN `incidents-<name>.ndjson` (`heal()` in supervisor.ts appends the
@@ -576,7 +576,7 @@ export function createHiveDoctor(options: CreateHiveDoctorOptions = {}): HiveDoc
 	// touching the network.
 	const emitInstallHealthFn = options.emitInstallHealthFn ?? emitInstallHealth;
 	const emitErrorFn = options.emitErrorFn ?? emitError;
-	const emitDeps: EmitDeps = { hivedoctorVersion: HIVEDOCTOR_VERSION, ...options.emitDeps };
+	const emitDeps: EmitDeps = { doctorVersion: DOCTOR_VERSION, ...options.emitDeps };
 
 	// The error-telemetry seam handed to the supervisor + the crash net (AC-064d.1). Fire-and-
 	// forget: we never await the emit and never let it throw into the loop. The chokepoint is
@@ -661,8 +661,8 @@ export function createHiveDoctor(options: CreateHiveDoctorOptions = {}): HiveDoc
 		statePinnedVersion: undefined,
 	});
 
-	// The lifecycle capture-event emitter for the additive `hivedoctor_updated` event
-	// (deduped per to_version in hivedoctor's own un-sharded state.json). distinct_id
+	// The lifecycle capture-event emitter for the additive `doctor_updated` event
+	// (deduped per to_version in doctor's own un-sharded state.json). distinct_id
 	// prefers the shared installer id (~/.honeycomb/install-id) with the device id as
 	// fallback. Gated (empty key / DO_NOT_TRACK / HONEYCOMB_TELEMETRY=0) + fail-soft, so
 	// wiring it changes no opt-out behavior and can never destabilize the watchdog.
@@ -713,7 +713,7 @@ export function createHiveDoctor(options: CreateHiveDoctorOptions = {}): HiveDoc
 	// Built over the SAME resolved `daemons` registry (PRD-001a) the supervisors above
 	// use, so a service with a `telemetryDbPath` is polled read-only about once a second
 	// and merged with its `/health` probe into the in-memory fleet model the `/events`
-	// SSE stream (wired below, on the status page) forwards to the-hive. Entirely
+	// SSE stream (wired below, on the status page) forwards to hive. Entirely
 	// independent of the supervision/remediation loops above: a telemetry fault here
 	// (PRD-001c c-AC-6) can never affect restart/escalation decisions, and vice versa.
 	// The injected `options.probe` seam is honored here exactly as it is for the
@@ -757,7 +757,7 @@ export function createHiveDoctor(options: CreateHiveDoctorOptions = {}): HiveDoc
 			escalation: () => needsAttention.read(),
 		},
 		logger,
-		// PRD-002a: the single hivedoctor-to-the-hive SSE stream, mounted onto the EXISTING
+		// PRD-002a: the single doctor-to-hive SSE stream, mounted onto the EXISTING
 		// loopback status page rather than a second listener (PRD-002 API changes note).
 		onEvents: (req, res) => handleSseRequest(req, res, { pollLoop: telemetryPollLoop, logger }),
 	});
@@ -768,7 +768,7 @@ export function createHiveDoctor(options: CreateHiveDoctorOptions = {}): HiveDoc
 	/**
 	 * Emit ONE install-health snapshot through the 064d chokepoint, fail-soft. Reads the
 	 * current state (last-known health + last-heal age) and the daemon version, stamps the
-	 * shared device id + the HiveDoctor version, and emits. Never throws: any failure reading
+	 * shared device id + the Doctor version, and emits. Never throws: any failure reading
 	 * state/version or emitting is swallowed so a telemetry heartbeat can never wedge the loop.
 	 * The opt-out gates live inside the chokepoint, so a disabled install honors opt-out here.
 	 */
@@ -787,7 +787,7 @@ export function createHiveDoctor(options: CreateHiveDoctorOptions = {}): HiveDoc
 					timestampMs: nowMs,
 					lastKnownHealth: s.lastKnownHealth,
 					lastHealAgeSeconds,
-					hivedoctorVersion: HIVEDOCTOR_VERSION,
+					doctorVersion: DOCTOR_VERSION,
 					daemonVersion,
 				},
 				emitDeps,

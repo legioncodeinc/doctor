@@ -1,13 +1,13 @@
 name: Release
 
-# The npm-publish workflow for @legioncodeinc/doctor. HiveDoctor is its own
+# The npm-publish workflow for @legioncodeinc/doctor. Doctor is its own
 # dependency-light package (PRD-063 OD-6) released directly from THIS repository
 # (github.com/legioncodeinc/doctor). It mirrors the fleet's OIDC
 # Trusted-Publishing pattern (same tokenless auth, same fail-closed gating, same
 # provenance) and runs at this repo's root on `v*` tags.
 #
-# JOB SPLIT (mirrors hivenectar's release.yaml, from the CodeRabbit review on
-# hivenectar PR #11): the pipeline is TWO jobs, not one. The `gate` job runs
+# JOB SPLIT (mirrors nectar's release.yaml, from the CodeRabbit review on
+# nectar PR #11): the pipeline is TWO jobs, not one. The `gate` job runs
 # npm ci, the full package gate, pack-check, the build, and every
 # publishability guard under READ-ONLY permissions (contents: read), then hands
 # the built `bundle/` to the `publish` job as an artifact. Only the short
@@ -115,7 +115,7 @@ jobs:
 
       # The FULL package gate, identical recipe to the doctor CI job. A
       # release must clear the same bar as a PR before any tarball is built.
-      - name: HiveDoctor gate (typecheck + test)
+      - name: Doctor gate (typecheck + test)
         run: npm run ci
 
       # Prove `npm pack`'s tarball carries no forbidden/secret filenames and
@@ -221,7 +221,7 @@ jobs:
   # bundle/ and publishes it verbatim (--ignore-scripts, so prepack's rebuild
   # is skipped and no devDependency ever installs here).
   publish:
-    name: Publish HiveDoctor to npm
+    name: Publish Doctor to npm
     runs-on: ubuntu-latest
     needs: gate
     permissions:

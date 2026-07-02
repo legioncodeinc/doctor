@@ -1,5 +1,5 @@
 /**
- * HiveDoctor local status page (PRD-064g AC-064g.4).
+ * Doctor local status page (PRD-064g AC-064g.4).
  *
  * A minimal read-only HTTP server bound to 127.0.0.1 on a config-driven port
  * (distinct from 3850/3851 used by the primary daemon and its dashboard). The
@@ -8,10 +8,10 @@
  *
  * Routes:
  *   GET /             -- minimal HTML page showing health, latest escalation,
- *                        and suggested `hivedoctor` commands.
+ *                        and suggested `doctor` commands.
  *   GET /status.json  -- the same data as JSON; machine-readable.
- *   GET /events       -- OPTIONAL: the hivedoctor-to-the-hive telemetry SSE stream
- *                        (hivedoctor PRD-002a, ADR-0001 decision 3). Only served when
+ *   GET /events       -- OPTIONAL: the doctor-to-hive telemetry SSE stream
+ *                        (doctor PRD-002a, ADR-0001 decision 3). Only served when
  *                        the composition root wires `onEvents` (`src/ingestion/sse.ts`);
  *                        this module stays agnostic of the poll loop / telemetry model.
  *                        Absent wiring means `/events` 404s like any other unknown path.
@@ -20,13 +20,13 @@
  * Design constraints (PRD-064g hard constraints):
  *   - Node built-ins ONLY: `node:http`. Zero new runtime deps.
  *   - Bind errors are SWALLOWED + LOGGED; a port-conflict or EACCES must never
- *     crash HiveDoctor (design principle 1, "incapable of crashing").
- *   - The server is READ-ONLY: it serves the state HiveDoctor already knows.
+ *     crash Doctor (design principle 1, "incapable of crashing").
+ *   - The server is READ-ONLY: it serves the state Doctor already knows.
  *     It never accepts mutations, never proxies to the daemon, never calls out.
  *   - Bound to 127.0.0.1 only (loopback); never 0.0.0.0.
  *   - start()/stop() lifecycle; safe to call stop() before start().
  *
- * Port: config-driven (`statusPagePort` in HiveDoctorConfig extension, default 3852).
+ * Port: config-driven (`statusPagePort` in DoctorConfig extension, default 3852).
  * The constant DEFAULT_STATUS_PAGE_PORT is exported so config.ts and tests use the
  * same value without a second definition.
  */
@@ -82,8 +82,8 @@ export interface StatusPageServerOptions {
 	/** Injected clock for `asOf` (defaults to `Date.now`). */
 	readonly now?: () => number;
 	/**
-	 * Optional handler for `GET /events` (hivedoctor PRD-002a: the single hivedoctor-to-
-	 * the-hive telemetry SSE stream). The composition root wires this to
+	 * Optional handler for `GET /events` (doctor PRD-002a: the single doctor-to-
+	 * hive telemetry SSE stream). The composition root wires this to
 	 * `src/ingestion/sse.ts`'s `handleSseRequest` bound to the running poll loop; this
 	 * module stays deliberately agnostic of SQLite/telemetry so its own tests never need
 	 * to know about the poll loop. Omitted means `/events` 404s like any other unknown path.
@@ -129,8 +129,8 @@ function buildSuggestedCommands(
 	const cmds: string[] = [];
 
 	if (health !== "ok") {
-		cmds.push("hivedoctor status");
-		cmds.push("hivedoctor logs");
+		cmds.push("doctor status");
+		cmds.push("doctor logs");
 	}
 
 	for (const escalation of escalations) {
@@ -145,20 +145,20 @@ function buildSuggestedCommands(
 					break;
 				case "clear-credentials":
 					// Deferred action - we recommend but do not perform it (AC-064c.3 / OD-4).
-					cmds.push("# Review ~/.deeplake/credentials.json (HiveDoctor cannot clear it automatically)");
+					cmds.push("# Review ~/.deeplake/credentials.json (Doctor cannot clear it automatically)");
 					break;
 				case "investigate":
 				case "manual-intervention":
-					cmds.push("hivedoctor doctor");
+					cmds.push("doctor doctor");
 					break;
 				default:
-					cmds.push("hivedoctor doctor");
+					cmds.push("doctor doctor");
 			}
 		}
 	}
 
 	if (cmds.length === 0) {
-		cmds.push("hivedoctor status");
+		cmds.push("doctor status");
 	}
 
 	return cmds;
@@ -205,9 +205,9 @@ function buildHtml(status: StatusJson): string {
 
 	return `<!DOCTYPE html>
 <html lang="en">
-<head><meta charset="utf-8"><title>HiveDoctor Status</title><style>${PAGE_CSS}</style></head>
+<head><meta charset="utf-8"><title>Doctor Status</title><style>${PAGE_CSS}</style></head>
 <body>
-<h1>HiveDoctor Local Status</h1>
+<h1>Doctor Local Status</h1>
 <p>Health: <span class="badge ${healthClass}">${escapeHtml(status.health)}</span></p>
 <p class="muted">As of ${escapeHtml(status.asOf)}</p>
 <h2>Daemons</h2>
@@ -218,7 +218,7 @@ ${escalationSection}
 <ul>${commandList}</ul>
 <hr>
 <p class="muted">
-  This page is served by HiveDoctor on 127.0.0.1 only.
+  This page is served by Doctor on 127.0.0.1 only.
   For machine-readable data: <a href="/status.json">/status.json</a>
 </p>
 </body>

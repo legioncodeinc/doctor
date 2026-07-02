@@ -14,7 +14,7 @@
  * no network, no global state. The runner's own `timeoutMs` budgets the npm subprocess; the
  * per-test {@link TEST_TIMEOUT_MS} (passed as the third `it` arg) budgets the VITEST test and must
  * sit ABOVE it. The 5s vitest DEFAULT was too tight for a cold `npm ls -g` (global-module
- * enumeration) on a busy Windows runner and flaked the HiveDoctor gate; this absorbs that.
+ * enumeration) on a busy Windows runner and flaked the Doctor gate; this absorbs that.
  */
 
 import { mkdtemp, rm } from "node:fs/promises";
@@ -54,7 +54,7 @@ describe("createExecFileRunner against real npm (multi-OS smoke)", () => {
 			// an empty temporary global prefix. Hosted Windows runners can spend a full minute walking
 			// their machine-global tree; the temp prefix keeps this smoke hermetic and still proves the
 			// real npm launch path succeeds cross-platform (no ENOENT).
-			const prefix = await mkdtemp(join(tmpdir(), "hivedoctor-npm-prefix-"));
+			const prefix = await mkdtemp(join(tmpdir(), "doctor-npm-prefix-"));
 			const runner = createExecFileRunner();
 			try {
 				const result = await runner.run(

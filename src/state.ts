@@ -1,11 +1,11 @@
 /**
- * HiveDoctor durable state (`state.json`) - defensive read/write (PRD-064 data-model
+ * Doctor durable state (`state.json`) - defensive read/write (PRD-064 data-model
  * section; PRD-064a "persist current rung + last-heal").
  *
- * `state.json` is HiveDoctor's memory across its own restarts: the current backoff
+ * `state.json` is Doctor's memory across its own restarts: the current backoff
  * rung, the consecutive-restart-failure count, the last-known daemon health, and the
  * last successful heal. Persisting it means a reboot does NOT reset a crash loop's
- * memory (064a technical consideration: "persisted across HiveDoctor restarts so a
+ * memory (064a technical consideration: "persisted across Doctor restarts so a
  * reboot does not reset a crash loop's memory").
  *
  * Both read and write are defensive (design principle 1, "incapable of crashing"):
@@ -25,14 +25,14 @@ import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node
 import type { Logger } from "./logger.js";
 import { resolveInBase } from "./safe-path.js";
 
-/** The last-observed coarse daemon health HiveDoctor recorded. */
+/** The last-observed coarse daemon health Doctor recorded. */
 export type LastKnownHealth = "ok" | "degraded" | "unreachable" | "unknown";
 
-/** HiveDoctor's durable state, persisted to `state.json`. */
-export interface HiveDoctorState {
+/** Doctor's durable state, persisted to `state.json`. */
+export interface DoctorState {
 	/** Schema version, so a later wave can migrate the file shape. */
 	readonly version: 1;
-	/** The last coarse daemon health HiveDoctor observed. */
+	/** The last coarse daemon health Doctor observed. */
 	readonly lastKnownHealth: LastKnownHealth;
 	/** The current remediation rung (1 = restart). */
 	readonly currentRung: number;
@@ -42,16 +42,16 @@ export interface HiveDoctorState {
 	readonly backoffRung: number;
 	/** ISO-8601 of the last confirmed return to healthy, or null if never. */
 	readonly lastHealAt: string | null;
-	/** ISO-8601 of the last restart HiveDoctor performed, or null (drives the cooldown across restarts). */
+	/** ISO-8601 of the last restart Doctor performed, or null (drives the cooldown across restarts). */
 	readonly lastRestartAt: string | null;
 	/**
-	 * True once the `hivedoctor_installed` lifecycle capture event has been reported for this
+	 * True once the `doctor_installed` lifecycle capture event has been reported for this
 	 * machine (lifecycle telemetry dedupe: re-installs never re-fire). Optional so existing
 	 * state files and literals stay valid; absent means "not yet reported".
 	 */
 	readonly installedEventReported?: boolean;
 	/**
-	 * The to_version of the last `hivedoctor_updated` lifecycle capture event reported
+	 * The to_version of the last `doctor_updated` lifecycle capture event reported
 	 * (lifecycle telemetry dedupe: one event per target version). Optional; absent means
 	 * "no update event reported yet".
 	 */
@@ -59,7 +59,7 @@ export interface HiveDoctorState {
 }
 
 /** The default state for a fresh box / unreadable file. */
-export const DEFAULT_STATE: HiveDoctorState = {
+export const DEFAULT_STATE: DoctorState = {
 	version: 1,
 	lastKnownHealth: "unknown",
 	currentRung: 1,
@@ -71,7 +71,7 @@ export const DEFAULT_STATE: HiveDoctorState = {
 
 /** Options for {@link createStateStore}. */
 export interface StateStoreOptions {
-	/** HiveDoctor's workspace dir; the state file is read/written under it. */
+	/** Doctor's workspace dir; the state file is read/written under it. */
 	readonly workspaceDir: string;
 	/** Logger for defensive reporting of a failed write (never thrown). */
 	readonly logger: Logger;
@@ -86,9 +86,9 @@ export interface StateStoreOptions {
 /** The state store: defensive read + defensive atomic write. */
 export interface StateStore {
 	/** Read the persisted state, or DEFAULT_STATE on any failure. Never throws. */
-	read(): HiveDoctorState;
+	read(): DoctorState;
 	/** Persist `state` atomically. Swallows + logs any failure. Never throws. */
-	write(state: HiveDoctorState): void;
+	write(state: DoctorState): void;
 }
 
 /** A coarse coercion of a known health string, defaulting to "unknown". */
@@ -117,7 +117,7 @@ function coerceIso(value: unknown): string | null {
  * default, so a partially-corrupt file degrades gracefully to a coherent state object
  * rather than propagating garbage into the loop.
  */
-export function mergeState(parsed: unknown): HiveDoctorState {
+export function mergeState(parsed: unknown): DoctorState {
 	if (parsed === null || typeof parsed !== "object") return DEFAULT_STATE;
 	const o = parsed as Record<string, unknown>;
 	return {
@@ -146,7 +146,7 @@ function stateFileName(name: string | undefined): string {
 export function createStateStore(options: StateStoreOptions): StateStore {
 	const fileName = stateFileName(options.name);
 	return {
-		read(): HiveDoctorState {
+		read(): DoctorState {
 			try {
 				// Containment: the fixed state-file name is joined under the variable workspace
 				// dir and asserted to stay inside it (defense-in-depth + SAST taint visibility). A
@@ -161,7 +161,7 @@ export function createStateStore(options: StateStoreOptions): StateStore {
 			}
 		},
 
-		write(state: HiveDoctorState): void {
+		write(state: DoctorState): void {
 			let tmpPath: string | null = null;
 			try {
 				// Containment: the fixed state-file name is joined under the variable workspace

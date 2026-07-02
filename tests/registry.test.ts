@@ -28,7 +28,7 @@ const HOME = "/home/test";
 
 let dir: string;
 beforeEach(() => {
-	dir = mkdtempSync(join(tmpdir(), "hivedoctor-registry-"));
+	dir = mkdtempSync(join(tmpdir(), "doctor-registry-"));
 });
 afterEach(() => {
 	rmSync(dir, { recursive: true, force: true });
@@ -36,7 +36,7 @@ afterEach(() => {
 
 /** Write a registry file into the temp dir and return its path. */
 function writeRegistry(contents: string): string {
-	const path = join(dir, "hivedoctor.daemons.json");
+	const path = join(dir, "doctor.daemons.json");
 	writeFileSync(path, contents, "utf8");
 	return path;
 }
@@ -53,18 +53,18 @@ const THREE_DAEMONS = {
 			restartCooldownMs: 5000,
 		},
 		{
-			name: "thehive",
+			name: "hive",
 			healthUrl: "http://127.0.0.1:3853/health",
-			pidPath: "~/.honeycomb/thehive.pid",
+			pidPath: "~/.honeycomb/hive.pid",
 			probeIntervalMs: 15000,
 			startupGraceMs: 45000,
 			restartGiveUpThreshold: 5,
 			restartCooldownMs: 2000,
 		},
 		{
-			name: "hivenectar",
+			name: "nectar",
 			healthUrl: "http://127.0.0.1:3854/health",
-			pidPath: "~/.honeycomb/hivenectar.pid",
+			pidPath: "~/.honeycomb/nectar.pid",
 			probeIntervalMs: 30000,
 			startupGraceMs: 60000,
 			restartGiveUpThreshold: 3,
@@ -79,7 +79,7 @@ describe("registry loader", () => {
 		const entries = readRegistryFile(path, HOME);
 		expect(entries).not.toBeNull();
 		expect(entries).toHaveLength(3);
-		const [honeycomb, thehive, hivenectar] = entries ?? [];
+		const [honeycomb, hive, nectar] = entries ?? [];
 		expect(honeycomb).toMatchObject({
 			name: "honeycomb",
 			healthUrl: "http://127.0.0.1:3850/health",
@@ -89,23 +89,23 @@ describe("registry loader", () => {
 			restartCooldownMs: 5000,
 		});
 		// The distinct per-entry values are preserved, not collapsed to one shared config.
-		expect(thehive).toMatchObject({
-			name: "thehive",
+		expect(hive).toMatchObject({
+			name: "hive",
 			healthUrl: "http://127.0.0.1:3853/health",
 			probeIntervalMs: 15000,
 			startupGraceMs: 45000,
 			restartGiveUpThreshold: 5,
 			restartCooldownMs: 2000,
 		});
-		expect(hivenectar?.name).toBe("hivenectar");
-		expect(hivenectar?.healthUrl).toBe("http://127.0.0.1:3854/health");
+		expect(nectar?.name).toBe("nectar");
+		expect(nectar?.healthUrl).toBe("http://127.0.0.1:3854/health");
 	});
 
 	it("expands a leading ~ in pidPath to the home directory", () => {
 		const path = writeRegistry(JSON.stringify(THREE_DAEMONS));
 		const entries = readRegistryFile(path, HOME) ?? [];
 		expect(entries[0]?.pidPath).toBe(join(HOME, ".honeycomb", "daemon.pid"));
-		expect(entries[1]?.pidPath).toBe(join(HOME, ".honeycomb", "thehive.pid"));
+		expect(entries[1]?.pidPath).toBe(join(HOME, ".honeycomb", "hive.pid"));
 	});
 
 	it("a-AC-2: an absent registry file falls back to the honeycomb primary at defaults", () => {
@@ -129,12 +129,12 @@ describe("registry loader", () => {
 
 	it("a-AC-3: a registry entry missing optional fields resolves them to built-in defaults", () => {
 		const path = writeRegistry(
-			JSON.stringify({ daemons: [{ name: "hivenectar", healthUrl: "http://127.0.0.1:3854/health" }] }),
+			JSON.stringify({ daemons: [{ name: "nectar", healthUrl: "http://127.0.0.1:3854/health" }] }),
 		);
 		const entries = readRegistryFile(path, HOME) ?? [];
 		expect(entries).toHaveLength(1);
 		expect(entries[0]).toEqual({
-			name: "hivenectar",
+			name: "nectar",
 			healthUrl: "http://127.0.0.1:3854/health",
 			pidPath: join(HOME, ".honeycomb", "daemon.pid"),
 			probeIntervalMs: DEFAULTS.probeIntervalMs,
@@ -149,7 +149,7 @@ describe("registry loader", () => {
 			JSON.stringify({
 				daemons: [
 					{
-						name: "thehive",
+						name: "hive",
 						healthUrl: "ftp://nope",
 						probeIntervalMs: "soon",
 						startupGraceMs: -1,
@@ -161,7 +161,7 @@ describe("registry loader", () => {
 		);
 		const entries = readRegistryFile(path, HOME) ?? [];
 		expect(entries[0]).toMatchObject({
-			name: "thehive",
+			name: "hive",
 			healthUrl: DEFAULTS.healthUrl, // non-http scheme rejected
 			probeIntervalMs: DEFAULTS.probeIntervalMs,
 			startupGraceMs: DEFAULTS.startupGraceMs, // negative rejected
@@ -201,12 +201,12 @@ describe("registry loader", () => {
 	});
 
 	it("defaultRegistryPath points under ~/.honeycomb", () => {
-		expect(defaultRegistryPath(HOME)).toBe(join(HOME, ".honeycomb", "hivedoctor.daemons.json"));
+		expect(defaultRegistryPath(HOME)).toBe(join(HOME, ".honeycomb", "doctor.daemons.json"));
 	});
 
 	it("security (SSRF): a non-loopback healthUrl falls back to the safe loopback default", () => {
 		// A tampered registry pointing healthUrl at an attacker-controlled host must NEVER become the
-		// probed origin: hivedoctor fetches healthUrl every interval, so an off-loopback value would
+		// probed origin: doctor fetches healthUrl every interval, so an off-loopback value would
 		// be an SSRF primitive. It degrades to the loopback default instead of trusting the host.
 		const path = writeRegistry(
 			JSON.stringify({
@@ -219,7 +219,7 @@ describe("registry loader", () => {
 
 	it("security (SSRF): an external hostname healthUrl is rejected in favor of the default", () => {
 		const path = writeRegistry(
-			JSON.stringify({ daemons: [{ name: "thehive", healthUrl: "https://evil.example.com/health" }] }),
+			JSON.stringify({ daemons: [{ name: "hive", healthUrl: "https://evil.example.com/health" }] }),
 		);
 		const entries = readRegistryFile(path, HOME) ?? [];
 		expect(entries[0]?.healthUrl).toBe(DEFAULTS.healthUrl);
@@ -262,8 +262,8 @@ describe("registry loader", () => {
  * a-AC-3 (a LIST of database paths) is NOT implemented: the pinned Wave-0 "Contract A"
  * in the-apiary's `library/ledger/EXECUTION_LEDGER.md` fixes `telemetryDbPath` as a
  * single OPTIONAL string (not a string-or-array), specifically so the other Wave-1
- * repos (honeycomb/hivenectar/the-hive) can conform to one literal shape without
- * waiting on hivedoctor's code to exist. See the ledger note left on that AC row.
+ * repos (honeycomb/nectar/hive) can conform to one literal shape without
+ * waiting on doctor's code to exist. See the ledger note left on that AC row.
  */
 describe("registry: PRD-001a telemetryDbPath extension", () => {
 	// Reuses the outer `dir` (fresh per test via the module-level beforeEach/afterEach
@@ -294,9 +294,9 @@ describe("registry: PRD-001a telemetryDbPath extension", () => {
 	});
 
 	it("a-AC-1: an absolute telemetryDbPath already under the trusted telemetry root is preserved (in resolved form)", () => {
-		const absolutePath = join(HOME, ".honeycomb", "telemetry", "hivenectar.sqlite");
+		const absolutePath = join(HOME, ".honeycomb", "telemetry", "nectar.sqlite");
 		const path = writeRegistry(
-			JSON.stringify({ daemons: [{ name: "hivenectar", healthUrl: "http://127.0.0.1:3854/health", telemetryDbPath: absolutePath }] }),
+			JSON.stringify({ daemons: [{ name: "nectar", healthUrl: "http://127.0.0.1:3854/health", telemetryDbPath: absolutePath }] }),
 		);
 
 		const entries = readRegistryFile(path, HOME);
@@ -305,12 +305,12 @@ describe("registry: PRD-001a telemetryDbPath extension", () => {
 
 	it("security: a telemetryDbPath OUTSIDE ~/.honeycomb/telemetry/ falls back to undefined (health-probe-only), never opened verbatim", () => {
 		// A registry entry pointing anywhere outside the trusted telemetry root -- another
-		// app's data file, an arbitrary absolute path -- must never be honored: hivedoctor
+		// app's data file, an arbitrary absolute path -- must never be honored: doctor
 		// would otherwise open ANY user-readable SQLite file and, if it has Contract-B-shaped
 		// tables, broadcast its contents on the unauthenticated loopback SSE stream.
 		const outsidePath = join(HOME, "abs", "svc.sqlite");
 		const path = writeRegistry(
-			JSON.stringify({ daemons: [{ name: "hivenectar", healthUrl: "http://127.0.0.1:3854/health", telemetryDbPath: outsidePath }] }),
+			JSON.stringify({ daemons: [{ name: "nectar", healthUrl: "http://127.0.0.1:3854/health", telemetryDbPath: outsidePath }] }),
 		);
 
 		const entries = readRegistryFile(path, HOME);
@@ -366,8 +366,8 @@ describe("registry: PRD-001a telemetryDbPath extension", () => {
 			JSON.stringify({
 				daemons: [
 					{ name: "honeycomb", healthUrl: "http://127.0.0.1:3850/health", telemetryDbPath: "" },
-					{ name: "hivenectar", healthUrl: "http://127.0.0.1:3854/health", telemetryDbPath: 42 },
-					{ name: "thehive", healthUrl: "http://127.0.0.1:3853/health", telemetryDbPath: null },
+					{ name: "nectar", healthUrl: "http://127.0.0.1:3854/health", telemetryDbPath: 42 },
+					{ name: "hive", healthUrl: "http://127.0.0.1:3853/health", telemetryDbPath: null },
 				],
 			}),
 		);
@@ -400,14 +400,14 @@ describe("registry: PRD-001a telemetryDbPath extension", () => {
 			JSON.stringify({
 				daemons: [
 					{
-						name: "hivenectar",
+						name: "nectar",
 						healthUrl: "http://127.0.0.1:3854/health",
-						pidPath: "~/.honeycomb/hivenectar.pid",
+						pidPath: "~/.honeycomb/nectar.pid",
 						probeIntervalMs: 15_000,
 						startupGraceMs: 45_000,
 						restartGiveUpThreshold: 5,
 						restartCooldownMs: 2_500,
-						telemetryDbPath: "~/.honeycomb/telemetry/hivenectar.sqlite",
+						telemetryDbPath: "~/.honeycomb/telemetry/nectar.sqlite",
 					},
 				],
 			}),
@@ -416,14 +416,14 @@ describe("registry: PRD-001a telemetryDbPath extension", () => {
 		const entries = readRegistryFile(path, HOME);
 		const entry = entries?.[0];
 		expect(entry).toEqual({
-			name: "hivenectar",
+			name: "nectar",
 			healthUrl: "http://127.0.0.1:3854/health",
-			pidPath: join(HOME, ".honeycomb", "hivenectar.pid"),
+			pidPath: join(HOME, ".honeycomb", "nectar.pid"),
 			probeIntervalMs: 15_000,
 			startupGraceMs: 45_000,
 			restartGiveUpThreshold: 5,
 			restartCooldownMs: 2_500,
-			telemetryDbPath: resolve(join(HOME, ".honeycomb", "telemetry", "hivenectar.sqlite")),
+			telemetryDbPath: resolve(join(HOME, ".honeycomb", "telemetry", "nectar.sqlite")),
 		});
 	});
 
@@ -432,9 +432,9 @@ describe("registry: PRD-001a telemetryDbPath extension", () => {
 			JSON.stringify({
 				daemons: [
 					{
-						name: "thehive",
+						name: "hive",
 						healthUrl: "http://127.0.0.1:3853/health",
-						pidPath: "~/.honeycomb/thehive.pid",
+						pidPath: "~/.honeycomb/hive.pid",
 						probeIntervalMs: 20_000,
 					},
 				],
@@ -443,9 +443,9 @@ describe("registry: PRD-001a telemetryDbPath extension", () => {
 
 		const entries = readRegistryFile(path, HOME);
 		expect(entries?.[0]).toEqual({
-			name: "thehive",
+			name: "hive",
 			healthUrl: "http://127.0.0.1:3853/health",
-			pidPath: join(HOME, ".honeycomb", "thehive.pid"),
+			pidPath: join(HOME, ".honeycomb", "hive.pid"),
 			probeIntervalMs: 20_000,
 			startupGraceMs: 60_000,
 			restartGiveUpThreshold: 3,

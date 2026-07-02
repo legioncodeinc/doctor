@@ -6,7 +6,7 @@ name: CI
 # scanner (`pack:check`) - so a green local gate predicts a green CI
 # (local equals CI).
 #
-# WHY THREE OPERATING SYSTEMS: HiveDoctor's self-supervision renders a per-OS
+# WHY THREE OPERATING SYSTEMS: Doctor's self-supervision renders a per-OS
 # service unit - a launchd plist (macOS), a systemd user unit (Linux), and a
 # Scheduled-Task XML / sc.exe argv (Windows) - and its argv/path logic branches
 # per platform (src/service/*). Running the FULL test suite on ubuntu + macos +
@@ -46,7 +46,7 @@ permissions:
 
 jobs:
   gate:
-    name: HiveDoctor gate (${{ matrix.os }})
+    name: Doctor gate (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
@@ -73,7 +73,7 @@ jobs:
       # `npm run ci` = typecheck + test (the package's local gate; local equals
       # CI). This is the cross-platform proof: the per-OS service-template + argv
       # suite runs on each of the three OSes.
-      - name: HiveDoctor gate (typecheck + test)
+      - name: Doctor gate (typecheck + test)
         run: npm run ci
 
       # The build is `tsc && node esbuild.config.mjs` - both must run. Proves the

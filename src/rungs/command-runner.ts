@@ -50,7 +50,7 @@ export interface CommandResult {
 	readonly ok: boolean;
 	/** The exit code, or null when the process was killed / failed to spawn. */
 	readonly code: number | null;
-	/** Captured stdout (secret-free for the commands HiveDoctor runs; size-capped). */
+	/** Captured stdout (secret-free for the commands Doctor runs; size-capped). */
 	readonly stdout: string;
 	/** Captured stderr (size-capped). */
 	readonly stderr: string;
@@ -151,7 +151,7 @@ export interface NpmSpawnPlan {
  * launch (cross-platform, metacharacter-proof); only when `npm-cli.js` cannot be located fall
  * back per-OS:
  *   - win32  → `npm.cmd` with `shell:true`. SAFE here because the ONLY values that reach the
- *     shell are HiveDoctor's own fixed literals (`install`/`uninstall`/`ls`/`-g`/`--json`/
+ *     shell are Doctor's own fixed literals (`install`/`uninstall`/`ls`/`-g`/`--json`/
  *     fixed package names) plus, for the reinstall verify, a semver-validated version. No
  *     attacker-controlled token is ever passed, so there is no metacharacter-injection vector.
  *   - other  → the direct `execFile("npm", args)` path, which works on Unix where `npm` is a

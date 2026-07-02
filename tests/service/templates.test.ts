@@ -9,7 +9,7 @@ import { describe, expect, it } from "vitest";
 import { resolveServicePlan, SERVICE_LABEL } from "../../src/service/platform.js";
 import {
 	escapeXml,
-	HIVEDOCTOR_RUN_COMMAND,
+	DOCTOR_RUN_COMMAND,
 	RESTART_SEC,
 	renderLaunchdPlist,
 	renderScheduledTaskXml,
@@ -20,7 +20,7 @@ import {
 import { fixedEnv } from "./helpers.js";
 
 describe("renderLaunchdPlist (macOS)", () => {
-	const plan = resolveServicePlan(fixedEnv({ platform: "darwin", home: "/Users/t", execPath: "/opt/hivedoctor" }));
+	const plan = resolveServicePlan(fixedEnv({ platform: "darwin", home: "/Users/t", execPath: "/opt/doctor" }));
 	const xml = renderLaunchdPlist(plan);
 
 	it("declares the canonical Label", () => {
@@ -29,8 +29,8 @@ describe("renderLaunchdPlist (macOS)", () => {
 	});
 
 	it("execs node + the bin + the run verb as an argv array (no shell)", () => {
-		expect(xml).toContain(`<string>/opt/hivedoctor</string>`);
-		expect(xml).toContain(`<string>${HIVEDOCTOR_RUN_COMMAND}</string>`);
+		expect(xml).toContain(`<string>/opt/doctor</string>`);
+		expect(xml).toContain(`<string>${DOCTOR_RUN_COMMAND}</string>`);
 	});
 
 	it("encodes start-on-boot (RunAtLoad) and restart-on-crash (KeepAlive)", () => {
@@ -46,24 +46,24 @@ describe("renderLaunchdPlist (macOS)", () => {
 	});
 
 	it("writes logs under the user home (no root required)", () => {
-		expect(xml).toContain("/Users/t/.honeycomb/hivedoctor/launchd.out.log");
+		expect(xml).toContain("/Users/t/.honeycomb/doctor/launchd.out.log");
 	});
 });
 
 describe("renderSystemdUnit (Linux)", () => {
-	const plan = resolveServicePlan(fixedEnv({ platform: "linux", execPath: "/usr/bin/hivedoctor" }));
+	const plan = resolveServicePlan(fixedEnv({ platform: "linux", execPath: "/usr/bin/doctor" }));
 	const unit = renderSystemdUnit(plan);
 
 	it("execs the bin + the run verb (exec path quoted)", () => {
-		expect(unit).toContain(`ExecStart="/usr/bin/hivedoctor" ${HIVEDOCTOR_RUN_COMMAND}`);
+		expect(unit).toContain(`ExecStart="/usr/bin/doctor" ${DOCTOR_RUN_COMMAND}`);
 	});
 
 	it("quotes a space-bearing exec path so it cannot mis-split", () => {
 		const spacedPlan = resolveServicePlan(
-			fixedEnv({ platform: "linux", execPath: "/opt/Program Files/hivedoctor" }),
+			fixedEnv({ platform: "linux", execPath: "/opt/Program Files/doctor" }),
 		);
 		const spacedUnit = renderSystemdUnit(spacedPlan);
-		expect(spacedUnit).toContain(`ExecStart="/opt/Program Files/hivedoctor" ${HIVEDOCTOR_RUN_COMMAND}`);
+		expect(spacedUnit).toContain(`ExecStart="/opt/Program Files/doctor" ${DOCTOR_RUN_COMMAND}`);
 	});
 
 	it("encodes restart-on-crash (Restart=always + RestartSec)", () => {
@@ -82,16 +82,16 @@ describe("renderSystemdUnit (Linux)", () => {
 		expect(unit).toContain("WantedBy=default.target");
 	});
 
-	it("is Type=simple (HiveDoctor stays foreground in its own process)", () => {
+	it("is Type=simple (Doctor stays foreground in its own process)", () => {
 		expect(unit).toContain("Type=simple");
 	});
 });
 
 describe("renderScheduledTaskXml (Windows)", () => {
-	const plan = resolveServicePlan(fixedEnv({ platform: "win32", home: "C:\\Users\\t", execPath: "C:\\bin\\hivedoctor.cmd" }));
+	const plan = resolveServicePlan(fixedEnv({ platform: "win32", home: "C:\\Users\\t", execPath: "C:\\bin\\doctor.cmd" }));
 	const xml = renderScheduledTaskXml(plan);
 
-	it("declares the HiveDoctor task URI", () => {
+	it("declares the Doctor task URI", () => {
 		expect(xml).toContain("<URI>\\doctor</URI>");
 	});
 
@@ -129,7 +129,7 @@ describe("renderScheduledTaskXml (Windows)", () => {
 
 	it("passes the exec path as a quoted Argument under a node Command (no shell parse)", () => {
 		// The Command is node; the bin path is a quoted argument so spaces are safe.
-		expect(xml).toContain(`<Arguments>"C:\\bin\\hivedoctor.cmd" ${HIVEDOCTOR_RUN_COMMAND}</Arguments>`);
+		expect(xml).toContain(`<Arguments>"C:\\bin\\doctor.cmd" ${DOCTOR_RUN_COMMAND}</Arguments>`);
 	});
 });
 
@@ -148,7 +148,7 @@ describe("escapeXml + renderUnit dispatch", () => {
 	});
 
 	it("an exec path with an ampersand is escaped in the plist (no broken XML)", () => {
-		const plan = resolveServicePlan(fixedEnv({ platform: "darwin", execPath: "/opt/a&b/hivedoctor" }));
-		expect(renderLaunchdPlist(plan)).toContain("/opt/a&amp;b/hivedoctor");
+		const plan = resolveServicePlan(fixedEnv({ platform: "darwin", execPath: "/opt/a&b/doctor" }));
+		expect(renderLaunchdPlist(plan)).toContain("/opt/a&amp;b/doctor");
 	});
 });

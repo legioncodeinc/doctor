@@ -2,9 +2,9 @@
  * Tests for the lifecycle capture-event FIRING POINTS in the CLI dispatcher
  * (src/cli/dispatch.ts runService):
  *
- *   - `hivedoctor_installed` fires exactly once, AFTER a SUCCESSFUL install-service;
+ *   - `doctor_installed` fires exactly once, AFTER a SUCCESSFUL install-service;
  *     a failed install fires nothing.
- *   - `hivedoctor_uninstalled` fires at uninstall-service BEFORE the service module's
+ *   - `doctor_uninstalled` fires at uninstall-service BEFORE the service module's
  *     teardown, fire-and-forget: a hung emit never blocks or fails the uninstall.
  *   - An absent lifecycle dep leaves both verbs exactly as before.
  *
@@ -49,7 +49,7 @@ function makeRecorder() {
 	return { order, lifecycle, serviceModule };
 }
 
-describe("hivedoctor_installed firing point (install-service)", () => {
+describe("doctor_installed firing point (install-service)", () => {
 	it("fires lifecycle.installed AFTER a successful install", async () => {
 		const rec = makeRecorder();
 		const { ctx } = buildCliHarness({ serviceModule: rec.serviceModule(true), lifecycle: rec.lifecycle });
@@ -82,7 +82,7 @@ describe("hivedoctor_installed firing point (install-service)", () => {
 	});
 });
 
-describe("hivedoctor_uninstalled firing point (uninstall-service)", () => {
+describe("doctor_uninstalled firing point (uninstall-service)", () => {
 	it("fires lifecycle.uninstalled BEFORE the service module's teardown", async () => {
 		const rec = makeRecorder();
 		const { ctx } = buildCliHarness({ serviceModule: rec.serviceModule(true), lifecycle: rec.lifecycle });

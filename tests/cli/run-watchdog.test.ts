@@ -10,12 +10,12 @@ import { runCli } from "../../src/cli/index.js";
 
 const ENV_KEYS = [
 	"HONEYCOMB_NO_AUTO_UPDATE",
-	"HIVEDOCTOR_HEALTH_URL",
-	"HIVEDOCTOR_WORKSPACE_DIR",
-	"HIVEDOCTOR_STATUS_PAGE_PORT",
-	"HIVEDOCTOR_PROBE_INTERVAL_MS",
-	"HIVEDOCTOR_STARTUP_GRACE_MS",
-	"HIVEDOCTOR_INSTALL_HEALTH_INTERVAL_MS",
+	"DOCTOR_HEALTH_URL",
+	"DOCTOR_WORKSPACE_DIR",
+	"DOCTOR_STATUS_PAGE_PORT",
+	"DOCTOR_PROBE_INTERVAL_MS",
+	"DOCTOR_STARTUP_GRACE_MS",
+	"DOCTOR_INSTALL_HEALTH_INTERVAL_MS",
 ] as const;
 
 type EnvKey = (typeof ENV_KEYS)[number];
@@ -45,7 +45,7 @@ function restoreEnv(): void {
 	}
 }
 
-describe("hivedoctor run lifecycle", () => {
+describe("doctor run lifecycle", () => {
 	afterEach(async () => {
 		restoreEnv();
 		if (blocker !== null) {
@@ -61,14 +61,14 @@ describe("hivedoctor run lifecycle", () => {
 	it("stays alive until SIGTERM even when the local status-page port is already bound", async () => {
 		for (const key of ENV_KEYS) priorEnv[key] = process.env[key];
 		const blockedPort = await blockEphemeralPort();
-		workspace = mkdtempSync(join(tmpdir(), "hivedoctor-run-watchdog-"));
+		workspace = mkdtempSync(join(tmpdir(), "doctor-run-watchdog-"));
 		process.env.HONEYCOMB_NO_AUTO_UPDATE = "1";
-		process.env.HIVEDOCTOR_HEALTH_URL = "http://127.0.0.1:1/health";
-		process.env.HIVEDOCTOR_WORKSPACE_DIR = workspace;
-		process.env.HIVEDOCTOR_STATUS_PAGE_PORT = String(blockedPort);
-		process.env.HIVEDOCTOR_PROBE_INTERVAL_MS = "5";
-		process.env.HIVEDOCTOR_STARTUP_GRACE_MS = "60000";
-		process.env.HIVEDOCTOR_INSTALL_HEALTH_INTERVAL_MS = "5";
+		process.env.DOCTOR_HEALTH_URL = "http://127.0.0.1:1/health";
+		process.env.DOCTOR_WORKSPACE_DIR = workspace;
+		process.env.DOCTOR_STATUS_PAGE_PORT = String(blockedPort);
+		process.env.DOCTOR_PROBE_INTERVAL_MS = "5";
+		process.env.DOCTOR_STARTUP_GRACE_MS = "60000";
+		process.env.DOCTOR_INSTALL_HEALTH_INTERVAL_MS = "5";
 
 		let settled = false;
 		const running = runCli(["run", "--no-auto-update"]).finally(() => {

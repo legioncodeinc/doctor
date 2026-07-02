@@ -25,8 +25,8 @@ describe("parseArgs", () => {
 	});
 
 	it("parses --key value as a string", () => {
-		const p = parseArgs(["logs", "--daemon", "thehive"]);
-		expect(p.flags.daemon).toBe("thehive");
+		const p = parseArgs(["logs", "--daemon", "hive"]);
+		expect(p.flags.daemon).toBe("hive");
 	});
 
 	it("collects extra positionals after the command", () => {

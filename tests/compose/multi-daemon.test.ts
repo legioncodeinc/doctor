@@ -1,7 +1,7 @@
 /**
  * Multi-daemon composition tests (PRD-004a US-1/US-2/US-3).
  *
- * Drives `createHiveDoctor` over an injected registry to prove the composition root spawns
+ * Drives `createDoctor` over an injected registry to prove the composition root spawns
  * one independent supervisor per entry (a-AC-1) with fully isolated per-daemon state +
  * incident shards (a-AC-4/5/6) and per-entry watchdog-war guards that read each entry's own
  * pidPath (a-AC-7) and apply each entry's own cooldown without gating any other entry (a-AC-8).
@@ -16,7 +16,7 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { createHiveDoctor } from "../../src/compose/index.js";
+import { createDoctor } from "../../src/compose/index.js";
 import { resolveConfig } from "../../src/config.js";
 import { silentLogger } from "../../src/logger.js";
 import type { DaemonEntry } from "../../src/registry.js";
@@ -28,7 +28,7 @@ let dir: string;
 const servers: MockHealthServer[] = [];
 
 beforeEach(() => {
-	dir = mkdtempSync(join(tmpdir(), "hivedoctor-multi-"));
+	dir = mkdtempSync(join(tmpdir(), "doctor-multi-"));
 });
 afterEach(async () => {
 	for (const s of servers.splice(0)) await s.close();
@@ -52,7 +52,7 @@ function entry(name: string, healthUrl: string, over: Partial<DaemonEntry> = {})
 /** An always-unhealthy handler (answers non-200 -> classified `degraded`). */
 const unhealthy = (): { statusCode: number; body: string } => ({ statusCode: 503, body: "" });
 
-async function statusJsonUrl(doctor: ReturnType<typeof createHiveDoctor>): Promise<string> {
+async function statusJsonUrl(doctor: ReturnType<typeof createDoctor>): Promise<string> {
 	for (let i = 0; i < 50; i += 1) {
 		const port = doctor.statusPage.listeningPort;
 		if (port !== undefined) return `http://127.0.0.1:${port}/status.json`;
@@ -61,14 +61,14 @@ async function statusJsonUrl(doctor: ReturnType<typeof createHiveDoctor>): Promi
 	throw new Error("status page did not bind");
 }
 
-describe("createHiveDoctor multi-daemon (PRD-004a)", () => {
+describe("createDoctor multi-daemon (PRD-004a)", () => {
 	it("a-AC-1: spawns one independent supervisor per registry entry", () => {
-		const doctor = createHiveDoctor({
+		const doctor = createDoctor({
 			config: { ...resolveConfig({}), workspaceDir: dir },
 			daemons: [
 				entry("honeycomb", "http://127.0.0.1:3850/health"),
-				entry("thehive", "http://127.0.0.1:3853/health"),
-				entry("hivenectar", "http://127.0.0.1:3854/health"),
+				entry("hive", "http://127.0.0.1:3853/health"),
+				entry("nectar", "http://127.0.0.1:3854/health"),
 			],
 			logger: silentLogger,
 			clock: createFakeClock(),
@@ -85,7 +85,7 @@ describe("createHiveDoctor multi-daemon (PRD-004a)", () => {
 		servers.push(serverA, serverB);
 
 		const pidReads: string[] = [];
-		const doctor = createHiveDoctor({
+		const doctor = createDoctor({
 			config: { ...resolveConfig({}), workspaceDir: dir },
 			daemons: [entry("a", serverA.url), entry("b", serverB.url)],
 			logger: silentLogger,
@@ -136,7 +136,7 @@ describe("createHiveDoctor multi-daemon (PRD-004a)", () => {
 
 		const pidReads: string[] = [];
 		const restart = vi.fn(async () => true); // a successful restart engages the cooldown
-		const doctor = createHiveDoctor({
+		const doctor = createDoctor({
 			config: { ...resolveConfig({}), workspaceDir: dir },
 			daemons: [entry("a", serverA.url), entry("b", serverB.url)],
 			logger: silentLogger,
@@ -171,9 +171,9 @@ describe("createHiveDoctor multi-daemon (PRD-004a)", () => {
 		await serverC.close();
 		servers.push(serverA, serverB);
 
-		const doctor = createHiveDoctor({
+		const doctor = createDoctor({
 			config: { ...resolveConfig({}), workspaceDir: dir },
-			daemons: [entry("honeycomb", serverA.url), entry("thehive", serverB.url), entry("hivenectar", serverC.url)],
+			daemons: [entry("honeycomb", serverA.url), entry("hive", serverB.url), entry("nectar", serverC.url)],
 			logger: silentLogger,
 			clock: createFakeClock(),
 			statusPagePort: 0,
@@ -189,8 +189,8 @@ describe("createHiveDoctor multi-daemon (PRD-004a)", () => {
 
 		expect(body.daemons).toEqual([
 			expect.objectContaining({ name: "honeycomb", health: "degraded" }),
-			expect.objectContaining({ name: "thehive", health: "ok" }),
-			expect.objectContaining({ name: "hivenectar", health: "unreachable" }),
+			expect.objectContaining({ name: "hive", health: "ok" }),
+			expect.objectContaining({ name: "nectar", health: "unreachable" }),
 		]);
 		doctor.statusPage.stop();
 		await doctor.stop();
@@ -202,24 +202,24 @@ describe("createHiveDoctor multi-daemon (PRD-004a)", () => {
 		servers.push(serverA, serverB);
 
 		const hostedEscalation = vi.fn(async () => undefined);
-		const doctor = createHiveDoctor({
+		const doctor = createDoctor({
 			config: { ...resolveConfig({}), workspaceDir: dir },
-			daemons: [entry("honeycomb", serverA.url), entry("hivenectar", serverB.url)],
+			daemons: [entry("honeycomb", serverA.url), entry("nectar", serverB.url)],
 			logger: silentLogger,
 			clock: createFakeClock(),
 			hostedEscalation,
 			statusPagePort: 0,
 		});
-		const [ladderHoneycomb, ladderHivenectar] = doctor.ladders;
+		const [ladderHoneycomb, ladderNectar] = doctor.ladders;
 		expect(doctor.ladder).toBe(ladderHoneycomb);
 
-		// The NON-primary entry (hivenectar) escalates. Its escalation hook must still reach the
+		// The NON-primary entry (nectar) escalates. Its escalation hook must still reach the
 		// hosted telemetry sink (useful signal regardless of which daemon escalated), but must NOT
 		// write honeycomb's shared needs-attention.json - that file is a dashboard read seam scoped
-		// to the primary honeycomb daemon, and hivenectar's own escalation is already durably
-		// recoverable from its own incidents-hivenectar.ndjson shard (b-AC-1/b-AC-2 isolation).
-		const result = await ladderHivenectar?.escalate({
-			diagnosis: "hivenectar ladder exhausted",
+		// to the primary honeycomb daemon, and nectar's own escalation is already durably
+		// recoverable from its own incidents-nectar.ndjson shard (b-AC-1/b-AC-2 isolation).
+		const result = await ladderNectar?.escalate({
+			diagnosis: "nectar ladder exhausted",
 			steps: [],
 			recommendedAction: "manual-intervention",
 			at: new Date(0).toISOString(),

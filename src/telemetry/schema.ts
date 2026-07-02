@@ -1,7 +1,7 @@
 /**
- * Shared telemetry row shapes and fleet event types (hivedoctor PRD-001b/002a/002b).
+ * Shared telemetry row shapes and fleet event types (doctor PRD-001b/002a/002b).
  *
- * hivedoctor is a READER ONLY: it never creates or writes any of these tables. Creation
+ * doctor is a READER ONLY: it never creates or writes any of these tables. Creation
  * and writes are each SERVICE's own job in its own repo (ADR-0001 decision 1, ADR-0002
  * decision 2; the pinned "Contract B" in the-apiary's
  * `library/ledger/EXECUTION_LEDGER.md`). This module defines:
@@ -10,9 +10,9 @@
  *     (`../ingestion/poll-loop.ts`) parses out of each service's read-only SQLite handle
  *     (via `./sqlite-reader.ts`), and
  *   - the fleet-wide model/event shapes ({@link FleetServiceModel}/{@link FleetTelemetryEvent})
- *     the SSE producer (`../ingestion/sse.ts`) emits to the-hive (Contract C).
+ *     the SSE producer (`../ingestion/sse.ts`) emits to hive (Contract C).
  *
- * `service_metrics` column sets VARY per service (honeycomb ships 3 counters, hivenectar
+ * `service_metrics` column sets VARY per service (honeycomb ships 3 counters, nectar
  * 5); this module -- and every reader built on it -- is deliberately schema-tolerant: it
  * never hardcodes a fixed counter list, only the bookkeeping columns to exclude
  * (`id`/`updated_at`, see `sqlite-reader.ts`).
@@ -24,7 +24,7 @@ export type FleetHealth = "ok" | "degraded" | "unreachable" | "unknown";
 /**
  * One `service_status` row, as written by a service on check-in (PRD-001b b-AC-1). The
  * `health` column is the service's own self-reported value (PRD-001b: "sourced from the
- * same signal the service's own `/health` reports"); hivedoctor does not recompute it,
+ * same signal the service's own `/health` reports"); doctor does not recompute it,
  * it only merges it with its OWN `/health` probe result (PRD-001c c-AC-2/c-AC-3).
  */
 export interface ServiceStatusRow {
@@ -34,7 +34,7 @@ export interface ServiceStatusRow {
 	readonly bindingTime: string;
 	/** ISO-8601, updated on every check-in/heartbeat. */
 	readonly lastSeen: string;
-	/** The service's self-reported health at check-in (free-form; not hivedoctor's own probe classification). */
+	/** The service's self-reported health at check-in (free-form; not doctor's own probe classification). */
 	readonly health: string;
 	/** Whether the service's Deep Lake connection is alive, or `null` when not reported. */
 	readonly deeplakeConnected: boolean | null;
@@ -45,7 +45,7 @@ export interface ServiceStatusRow {
 /**
  * A schema-tolerant metrics snapshot: every `service_metrics` column except the
  * bookkeeping `id`/`updated_at`, camelCased (PRD-002b). Never a fixed shape -- honeycomb
- * and hivenectar ship different counter sets on the same table name.
+ * and nectar ship different counter sets on the same table name.
  */
 export type ServiceMetrics = Readonly<Record<string, number>>;
 
@@ -96,7 +96,7 @@ export interface FleetLogEntry {
 /**
  * The single `fleet-telemetry` SSE event payload (Contract C, PRD-002a). `logs` is a
  * BOUNDED SLICE of only the new rows since the previous tick (PRD-002c c-AC-2), never a
- * full history, so both hivedoctor and the portal stay memory-bounded regardless of how
+ * full history, so both doctor and the portal stay memory-bounded regardless of how
  * much a service has logged in total.
  */
 export interface FleetTelemetryEvent {

@@ -1,5 +1,5 @@
 /**
- * Tests for the HiveDoctor telemetry chokepoint (PRD-064d AC-064d.1 .. AC-064d.7).
+ * Tests for the Doctor telemetry chokepoint (PRD-064d AC-064d.1 .. AC-064d.7).
  *
  * All tests use a mock fetch (never hits the network). The mock records the
  * outbound request so tests can assert on the payload shape, the URL, and the
@@ -62,7 +62,7 @@ function testDeps(overrides: Partial<EmitDeps> = {}): EmitDeps {
 	return {
 		posthogKey: FAKE_KEY,
 		posthogHost: FAKE_HOST,
-		hivedoctorVersion: FAKE_VERSION,
+		doctorVersion: FAKE_VERSION,
 		fetch: mock,
 		env: {},
 		now: () => FAKE_NOW,
@@ -222,7 +222,7 @@ describe("AC-064d.2 install-health stream", () => {
 				timestampMs: FAKE_NOW,
 				lastKnownHealth: "ok",
 				lastHealAgeSeconds: 120,
-				hivedoctorVersion: FAKE_VERSION,
+				doctorVersion: FAKE_VERSION,
 				daemonVersion: "0.1.8",
 			},
 			deps,
@@ -251,7 +251,7 @@ describe("AC-064d.2 install-health stream", () => {
 				timestampMs: FAKE_NOW,
 				lastKnownHealth: "degraded",
 				lastHealAgeSeconds: null,
-				hivedoctorVersion: FAKE_VERSION,
+				doctorVersion: FAKE_VERSION,
 				daemonVersion: "0.1.8",
 			},
 			testDeps({ fetch: mock }),
@@ -277,7 +277,7 @@ describe("AC-064d.2 install-health stream", () => {
 				timestampMs: FAKE_NOW,
 				lastKnownHealth: "unreachable",
 				lastHealAgeSeconds: 3700,
-				hivedoctorVersion: FAKE_VERSION,
+				doctorVersion: FAKE_VERSION,
 				daemonVersion: "0.1.8",
 			},
 			testDeps({ fetch: mock }),
@@ -307,7 +307,7 @@ describe("AC-064d.2 install-health stream", () => {
 				timestampMs: FAKE_NOW,
 				lastKnownHealth: "unknown",
 				lastHealAgeSeconds: null,
-				hivedoctorVersion: FAKE_VERSION,
+				doctorVersion: FAKE_VERSION,
 				daemonVersion: "0.1.8",
 			},
 			testDeps({ fetch: mock }),
@@ -339,7 +339,7 @@ describe("AC-064d.3 episode stream", () => {
 				incident: makeIncident(),
 				deviceId: FAKE_DEVICE_ID,
 				timestampMs: FAKE_NOW,
-				hivedoctorVersion: FAKE_VERSION,
+				doctorVersion: FAKE_VERSION,
 				daemonVersion: "0.1.8",
 			},
 			deps,
@@ -367,7 +367,7 @@ describe("AC-064d.3 episode stream", () => {
 				incident: makeIncident({ resolved: true }),
 				deviceId: FAKE_DEVICE_ID,
 				timestampMs: FAKE_NOW,
-				hivedoctorVersion: FAKE_VERSION,
+				doctorVersion: FAKE_VERSION,
 				daemonVersion: "0.1.8",
 			},
 			testDeps({ fetch: mock }),
@@ -389,7 +389,7 @@ describe("AC-064d.3 episode stream", () => {
 				incident: makeIncident({ resolved: false }),
 				deviceId: FAKE_DEVICE_ID,
 				timestampMs: FAKE_NOW,
-				hivedoctorVersion: FAKE_VERSION,
+				doctorVersion: FAKE_VERSION,
 				daemonVersion: "0.1.8",
 			},
 			testDeps({ fetch: mock }),
@@ -419,7 +419,7 @@ describe("AC-064d.3 episode stream", () => {
 				incident,
 				deviceId: FAKE_DEVICE_ID,
 				timestampMs: FAKE_NOW,
-				hivedoctorVersion: FAKE_VERSION,
+				doctorVersion: FAKE_VERSION,
 				daemonVersion: "0.1.8",
 			},
 			testDeps({ fetch: mock }),
@@ -497,7 +497,7 @@ describe("AC-064d.4 opt-out", () => {
 				timestampMs: FAKE_NOW,
 				lastKnownHealth: "ok",
 				lastHealAgeSeconds: 60,
-				hivedoctorVersion: FAKE_VERSION,
+				doctorVersion: FAKE_VERSION,
 				daemonVersion: "0.1.8",
 			},
 			testDeps({ fetch: mock, env: { DO_NOT_TRACK: "1" } }),
@@ -513,7 +513,7 @@ describe("AC-064d.4 opt-out", () => {
 				incident: makeIncident(),
 				deviceId: FAKE_DEVICE_ID,
 				timestampMs: FAKE_NOW,
-				hivedoctorVersion: FAKE_VERSION,
+				doctorVersion: FAKE_VERSION,
 				daemonVersion: "0.1.8",
 			},
 			testDeps({ fetch: mock, env: { HONEYCOMB_TELEMETRY: "0" } }),
@@ -549,7 +549,7 @@ describe("AC-064d.5 allow-list scrubbing", () => {
 				timestampMs: FAKE_NOW,
 				lastKnownHealth: "ok",
 				lastHealAgeSeconds: 60,
-				hivedoctorVersion: FAKE_VERSION,
+				doctorVersion: FAKE_VERSION,
 				daemonVersion: "0.1.8",
 			},
 			testDeps({ fetch: makeFetch() }),
@@ -559,7 +559,7 @@ describe("AC-064d.5 allow-list scrubbing", () => {
 				incident: makeIncident(),
 				deviceId: FAKE_DEVICE_ID,
 				timestampMs: FAKE_NOW,
-				hivedoctorVersion: FAKE_VERSION,
+				doctorVersion: FAKE_VERSION,
 				daemonVersion: "0.1.8",
 			},
 			testDeps({ fetch: makeFetch() }),
@@ -597,7 +597,7 @@ describe("AC-064d.5 allow-list scrubbing", () => {
 		expect(keys).toContain("device_id");
 	});
 
-	it("service.name is 'hivedoctor' in resource attributes", async () => {
+	it("service.name is 'doctor' in resource attributes", async () => {
 		const { mock, calls } = makeMockFetch();
 		await emitError(
 			{ errorClass: "E", deviceId: FAKE_DEVICE_ID, timestampMs: FAKE_NOW },
@@ -612,7 +612,7 @@ describe("AC-064d.5 allow-list scrubbing", () => {
 			attributes: Array<{ key: string; value: { stringValue: string } }>;
 		};
 		const sn = resource.attributes.find((a) => a.key === "service.name");
-		expect(sn?.value?.stringValue).toBe("hivedoctor");
+		expect(sn?.value?.stringValue).toBe("doctor");
 	});
 
 	it("the PostHog key does NOT appear in the request body (only in the header)", async () => {
@@ -772,7 +772,7 @@ describe("convenience helpers", () => {
 				timestampMs: FAKE_NOW,
 				lastKnownHealth: "ok",
 				lastHealAgeSeconds: 0,
-				hivedoctorVersion: FAKE_VERSION,
+				doctorVersion: FAKE_VERSION,
 				daemonVersion: "0.1.8",
 			},
 			testDeps({ fetch: mock }),
@@ -787,7 +787,7 @@ describe("convenience helpers", () => {
 				incident: makeIncident(),
 				deviceId: FAKE_DEVICE_ID,
 				timestampMs: FAKE_NOW,
-				hivedoctorVersion: FAKE_VERSION,
+				doctorVersion: FAKE_VERSION,
 				daemonVersion: "0.1.8",
 			},
 			testDeps({ fetch: mock }),

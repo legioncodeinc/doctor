@@ -1,5 +1,5 @@
 /**
- * The single-sourced HiveDoctor command surface (PRD-064f Scope command table).
+ * The single-sourced Doctor command surface (PRD-064f Scope command table).
  *
  * ONE list defines every command name, its menu summary, and the canonical set of
  * known commands. The dispatcher ({@link file://./dispatch.ts}) and the banner menu
@@ -9,12 +9,12 @@
  * Binding rulings encoded here (PRD-064 Decisions, OD-4):
  *   - There is NO `clear-credentials` command. Credential purge is DEFERRED, not in v1;
  *     it is only ever RECOMMENDED via escalation, never offered as a command (AC-064f.4).
- *   - `self-update` is the ONLY command that updates HiveDoctor's own package (AC-064f.5).
+ *   - `self-update` is the ONLY command that updates Doctor's own package (AC-064f.5).
  *
  * Pure data + a tiny lookup; no I/O. Built-ins only.
  */
 
-/** Every command HiveDoctor's CLI dispatches. The string union is the closed set. */
+/** Every command Doctor's CLI dispatches. The string union is the closed set. */
 export type CommandName =
 	| "run"
 	| "status"
@@ -51,9 +51,9 @@ export const COMMAND_MENU: readonly CommandMenuEntry[] = [
 	{ invocation: "reinstall", summary: "Reinstall the primary daemon (rung 2)." },
 	{ invocation: "uninstall-hivemind", summary: "Remove a conflicting @deeplake/hivemind global (rung 3, confirms)." },
 	{ invocation: "update", summary: "Update the primary daemon via the blessed gate (--check to preview)." },
-	{ invocation: "self-update", summary: "Update HiveDoctor's own package (the ONLY path that does)." },
-	{ invocation: "install-service", summary: "Register HiveDoctor as an OS service (064b)." },
-	{ invocation: "uninstall-service", summary: "Unregister the HiveDoctor OS service (064b)." },
+	{ invocation: "self-update", summary: "Update Doctor's own package (the ONLY path that does)." },
+	{ invocation: "install-service", summary: "Register Doctor as an OS service (064b)." },
+	{ invocation: "uninstall-service", summary: "Unregister the Doctor OS service (064b)." },
 	{ invocation: "logs", summary: "Tail incident logs for all daemons, or one via --daemon <name>." },
 	{ invocation: "help", summary: "Show this banner and command menu." },
 ];

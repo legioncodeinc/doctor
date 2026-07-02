@@ -133,8 +133,8 @@ describe("AC-064g.4: status page GET /status.json returns health + escalation + 
 			port: 0,
 			state: makeState("degraded", honeycombEscalation, [
 				makeDaemon("honeycomb", "degraded", honeycombEscalation),
-				makeDaemon("thehive", "ok", null),
-				makeDaemon("hivenectar", "unreachable", null),
+				makeDaemon("hive", "ok", null),
+				makeDaemon("nectar", "unreachable", null),
 			]),
 			logger: silentLogger,
 			now: () => FAKE_NOW,
@@ -144,8 +144,8 @@ describe("AC-064g.4: status page GET /status.json returns health + escalation + 
 		const body = (await localFetch(port, "/status.json").then((r) => r.json())) as StatusJson;
 		expect(body.daemons).toEqual([
 			{ name: "honeycomb", health: "degraded", escalation: honeycombEscalation },
-			{ name: "thehive", health: "ok", escalation: null },
-			{ name: "hivenectar", health: "unreachable", escalation: null },
+			{ name: "hive", health: "ok", escalation: null },
+			{ name: "nectar", health: "unreachable", escalation: null },
 		]);
 	});
 
@@ -265,8 +265,8 @@ describe("AC-064g.4: GET / returns HTML status page", () => {
 			port: 0,
 			state: makeState("degraded", null, [
 				makeDaemon("honeycomb", "ok"),
-				makeDaemon("thehive", "degraded"),
-				makeDaemon("hivenectar", "unreachable"),
+				makeDaemon("hive", "degraded"),
+				makeDaemon("nectar", "unreachable"),
 			]),
 			logger: silentLogger,
 			now: () => FAKE_NOW,
@@ -275,8 +275,8 @@ describe("AC-064g.4: GET / returns HTML status page", () => {
 
 		const body = await localFetch(port, "/").then((r) => r.text());
 		expect(body).toContain("<code>honeycomb</code>");
-		expect(body).toContain("<code>thehive</code>");
-		expect(body).toContain("<code>hivenectar</code>");
+		expect(body).toContain("<code>hive</code>");
+		expect(body).toContain("<code>nectar</code>");
 		expect(body).toContain('class="badge ok"');
 		expect(body).toContain('class="badge degraded"');
 		expect(body).toContain('class="badge unreachable"');

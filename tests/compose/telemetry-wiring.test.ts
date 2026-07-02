@@ -1,7 +1,7 @@
 /**
- * Composition-root wiring tests for hivedoctor PRD-001/PRD-002 (telemetry ingestion + SSE).
+ * Composition-root wiring tests for doctor PRD-001/PRD-002 (telemetry ingestion + SSE).
  *
- * Asserts that `createHiveDoctor()` wires:
+ * Asserts that `createDoctor()` wires:
  *   - the telemetry poll loop over the resolved daemon registry (a `telemetryDbPath`
  *     entry feeds the poll loop; a legacy entry stays health-probe-only);
  *   - the `/events` SSE endpoint onto the EXISTING status page server (PRD-002a
@@ -26,7 +26,7 @@ import { get } from "node:http";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { createHiveDoctor } from "../../src/compose/index.js";
+import { createDoctor } from "../../src/compose/index.js";
 import { resolveConfig } from "../../src/config.js";
 import { silentLogger } from "../../src/logger.js";
 import type { SupervisorClock } from "../../src/supervisor.js";
@@ -47,7 +47,7 @@ function fakeRunner(): CommandRunner {
 
 const tmpDirs: string[] = [];
 function makeTmp(): string {
-	const d = mkdtempSync(join(tmpdir(), "hivedoctor-telemetry-wiring-"));
+	const d = mkdtempSync(join(tmpdir(), "doctor-telemetry-wiring-"));
 	tmpDirs.push(d);
 	return d;
 }
@@ -77,9 +77,9 @@ function buildFixtureDb(path: string): void {
 	db.close();
 }
 
-function buildDoctor(over: Partial<Parameters<typeof createHiveDoctor>[0]> = {}) {
+function buildDoctor(over: Partial<Parameters<typeof createDoctor>[0]> = {}) {
 	const config = { ...resolveConfig({}), workspaceDir: makeTmp() };
-	return createHiveDoctor({
+	return createDoctor({
 		config,
 		env: {},
 		logger: silentLogger,
@@ -91,7 +91,7 @@ function buildDoctor(over: Partial<Parameters<typeof createHiveDoctor>[0]> = {})
 	});
 }
 
-async function waitForPort(doctor: ReturnType<typeof createHiveDoctor>): Promise<number> {
+async function waitForPort(doctor: ReturnType<typeof createDoctor>): Promise<number> {
 	for (let i = 0; i < 50; i += 1) {
 		const port = doctor.statusPage.listeningPort;
 		if (port !== undefined) return port;
@@ -117,7 +117,7 @@ function fetchEventsFirstFrame(port: number): Promise<{ statusCode: number | und
 	});
 }
 
-describe("createHiveDoctor telemetry wiring (PRD-001/PRD-002)", () => {
+describe("createDoctor telemetry wiring (PRD-001/PRD-002)", () => {
 	afterEach(() => {
 		for (const d of tmpDirs.splice(0)) rmSync(d, { recursive: true, force: true });
 	});
@@ -208,10 +208,10 @@ describe("createHiveDoctor telemetry wiring (PRD-001/PRD-002)", () => {
 	});
 
 	it("a MALFORMED registry does not prevent the telemetry loop from wiring over the honeycomb-primary fallback (PRD-004d regression guard)", async () => {
-		const registryPath = join(makeTmp(), "hivedoctor.daemons.json");
+		const registryPath = join(makeTmp(), "doctor.daemons.json");
 		writeFileSync(registryPath, "{ not valid json", "utf8");
 
-		const doctor = createHiveDoctor({
+		const doctor = createDoctor({
 			config: { ...resolveConfig({}), workspaceDir: makeTmp() },
 			env: {},
 			logger: silentLogger,

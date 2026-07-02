@@ -1,5 +1,5 @@
 /**
- * The roughly one-second poll-and-merge loop (hivedoctor PRD-001c; ADR-0001 decision 2,
+ * The roughly one-second poll-and-merge loop (doctor PRD-001c; ADR-0001 decision 2,
  * ADR-0002 decision 3).
  *
  * This is the puller half of ADR-0001: about once per second, for every registered
@@ -7,7 +7,7 @@
  * the entry carries a `telemetryDbPath`, opens that service's SQLite database READ-ONLY
  * (`../telemetry/sqlite-reader.js`) and runs windowed queries. Both results are merged
  * into one in-memory {@link FleetTelemetryEvent} -- the single source of truth the SSE
- * producer (`./sse.js`) streams to the-hive.
+ * producer (`./sse.js`) streams to hive.
  *
  * Fail-soft and crash-proof by construction (design principle 1):
  *   - a probe failure classifies as `unreachable` rather than throwing (mirrors

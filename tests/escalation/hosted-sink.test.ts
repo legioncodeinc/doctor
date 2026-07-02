@@ -62,7 +62,7 @@ describe("AC-064g.3: credentialed -> hosted sink receives the report with device
 		const result = await emitEscalationToHostedSink({
 			escalation: makeEscalation(),
 			deviceId: FAKE_DEVICE_ID,
-			hivedoctorVersion: "0.1.0-test",
+			doctorVersion: "0.1.0-test",
 			daemonVersion: "0.1.0-test",
 			timestampMs: FAKE_NOW,
 			emitDeps: { ...baseEmitDeps(), fetch: mock },
@@ -77,7 +77,7 @@ describe("AC-064g.3: credentialed -> hosted sink receives the report with device
 		await emitEscalationToHostedSink({
 			escalation: makeEscalation(),
 			deviceId: FAKE_DEVICE_ID,
-			hivedoctorVersion: "0.1.0-test",
+			doctorVersion: "0.1.0-test",
 			daemonVersion: "unknown",
 			timestampMs: FAKE_NOW,
 			emitDeps: { ...baseEmitDeps(), fetch: mock },
@@ -91,7 +91,7 @@ describe("AC-064g.3: credentialed -> hosted sink receives the report with device
 		await emitEscalationToHostedSink({
 			escalation: makeEscalation(),
 			deviceId: FAKE_DEVICE_ID,
-			hivedoctorVersion: "0.1.0-test",
+			doctorVersion: "0.1.0-test",
 			daemonVersion: "unknown",
 			timestampMs: FAKE_NOW,
 			emitDeps: { ...baseEmitDeps(), fetch: mock },
@@ -106,7 +106,7 @@ describe("AC-064g.3: credentialed -> hosted sink receives the report with device
 		const result = await emitEscalationToHostedSink({
 			escalation: makeEscalation(),
 			deviceId: FAKE_DEVICE_ID,
-			hivedoctorVersion: "0.1.0-test",
+			doctorVersion: "0.1.0-test",
 			daemonVersion: "unknown",
 			timestampMs: FAKE_NOW,
 			emitDeps: { posthogKey: "", fetch: mock, env: {} },
@@ -121,7 +121,7 @@ describe("AC-064g.3: credentialed -> hosted sink receives the report with device
 		const result = await emitEscalationToHostedSink({
 			escalation: makeEscalation(),
 			deviceId: FAKE_DEVICE_ID,
-			hivedoctorVersion: "0.1.0-test",
+			doctorVersion: "0.1.0-test",
 			daemonVersion: "unknown",
 			timestampMs: FAKE_NOW,
 			emitDeps: {
@@ -143,7 +143,7 @@ describe("AC-064g.3: credentialed -> hosted sink receives the report with device
 		const result = await emitEscalationToHostedSink({
 			escalation: makeEscalation(),
 			deviceId: FAKE_DEVICE_ID,
-			hivedoctorVersion: "0.1.0-test",
+			doctorVersion: "0.1.0-test",
 			daemonVersion: "unknown",
 			timestampMs: FAKE_NOW,
 			logger: silentLogger,
@@ -167,7 +167,7 @@ describe("AC-064g.3: credentialed -> hosted sink receives the report with device
 			emitEscalationToHostedSink({
 				escalation: makeEscalation(),
 				deviceId: FAKE_DEVICE_ID,
-				hivedoctorVersion: "0.1.0-test",
+				doctorVersion: "0.1.0-test",
 				daemonVersion: "unknown",
 				timestampMs: FAKE_NOW,
 				logger: silentLogger,

@@ -15,7 +15,7 @@ import { buildCliContext } from "../../src/cli/index.js";
 import { startMockHealthServer, type MockHealthServer } from "../helpers/health-server.js";
 
 let server: MockHealthServer;
-const PRIOR_HEALTH_URL = process.env.HIVEDOCTOR_HEALTH_URL;
+const PRIOR_HEALTH_URL = process.env.DOCTOR_HEALTH_URL;
 
 beforeEach(async () => {
 	// A mock /health reporting a distinctive version string `npm ls` would never emit.
@@ -23,12 +23,12 @@ beforeEach(async () => {
 		statusCode: 200,
 		body: JSON.stringify({ status: "ok", version: "5.5.5-daemon" }),
 	}));
-	process.env.HIVEDOCTOR_HEALTH_URL = server.url;
+	process.env.DOCTOR_HEALTH_URL = server.url;
 });
 
 afterEach(async () => {
-	if (PRIOR_HEALTH_URL === undefined) delete process.env.HIVEDOCTOR_HEALTH_URL;
-	else process.env.HIVEDOCTOR_HEALTH_URL = PRIOR_HEALTH_URL;
+	if (PRIOR_HEALTH_URL === undefined) delete process.env.DOCTOR_HEALTH_URL;
+	else process.env.DOCTOR_HEALTH_URL = PRIOR_HEALTH_URL;
 	await server.close();
 });
 

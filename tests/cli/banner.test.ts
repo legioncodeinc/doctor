@@ -16,11 +16,11 @@ describe("renderBanner", () => {
 		expect(b).toContain("ACTIVELOOP");
 		expect(b).toContain("A collaboration between Legion Code Inc. x Activeloop");
 		expect(b).toContain("deeplake.ai");
-		expect(b).toContain("HiveDoctor");
+		expect(b).toContain("Doctor");
 	});
 
 	it("includes the single-sourced version", () => {
-		// In tests __HIVEDOCTOR_VERSION__ is undefined, so version falls to the dev sentinel.
+		// In tests __DOCTOR_VERSION__ is undefined, so version falls to the dev sentinel.
 		expect(renderBanner(plain)).toContain("v0.0.0-dev");
 	});
 });
@@ -39,7 +39,7 @@ describe("renderMenu", () => {
 describe("renderBannerWithMenu", () => {
 	it("concatenates the banner and the menu", () => {
 		const full = renderBannerWithMenu(plain);
-		expect(full).toContain("HiveDoctor");
+		expect(full).toContain("Doctor");
 		expect(full).toContain("Commands:");
 	});
 

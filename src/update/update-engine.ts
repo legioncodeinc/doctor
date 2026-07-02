@@ -22,7 +22,7 @@
  * Crash-safety (design principle 1): every external call is behind an injected seam that
  * resolves a value rather than throwing, and the whole body is wrapped so any unexpected
  * throw becomes a failed {@link UpdateTransactionResult}. An update error NEVER crashes
- * HiveDoctor (binding constraint: fail-soft). The install lock is ALWAYS released in a
+ * Doctor (binding constraint: fail-soft). The install lock is ALWAYS released in a
  * `finally`. Built-ins only (via the injected runner, lock, restart, and health seams).
  */
 
@@ -84,7 +84,7 @@ export interface UpdateEngineDeps {
 	/** The update/rollback telemetry seam (default: the 064d chokepoint adapter). */
 	readonly emit?: UpdateEmit;
 	/**
-	 * The lifecycle capture-event emitter for the additive `hivedoctor_updated` event
+	 * The lifecycle capture-event emitter for the additive `doctor_updated` event
 	 * (deduped per to_version inside the emitter). Only consulted when `emit` is NOT
 	 * injected (an injected emit seam owns its own telemetry). Absent = no capture leg.
 	 */
@@ -122,7 +122,7 @@ export interface UpdateTransactionResult {
 }
 
 /**
- * A pure DRY-RUN of the update decision (`hivedoctor update --check`). It reads the same
+ * A pure DRY-RUN of the update decision (`doctor update --check`). It reads the same
  * three inputs the real transaction reads (installed + latest + blessed) and runs the SAME
  * gate ({@link decideUpdate}), but performs NO mutation: it never acquires the install lock,
  * never runs `npm install`, never restarts, and never verifies/rolls back. A "check" must
