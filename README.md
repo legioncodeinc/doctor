@@ -238,7 +238,7 @@ No MCP server, no SDK, no inbound ports beyond the loopback status page. That is
 
 <h2 align="center"><a href="https://ideas.theapiary.sh">📍 Status & Roadmap</a></h2>
 
-Doctor is **pre-release (v0.1.x)** and versions independently of the rest of the stack. The watchdog core is real today: multi-daemon registry supervision, the repair ladder, OS service registration on all three platforms, the blessed-update gate, the `:3852` status page, and scrubbed escalation telemetry. The richer telemetry pipeline (per-service SQLite ingestion and the SSE feed to the portal) is actively being built out under its ADRs and PRDs. Vote on what comes next at **[ideas.theapiary.sh](https://ideas.theapiary.sh)**.
+Doctor is **pre-release (v0.2.x)** and versions independently of the rest of the stack. The watchdog core is real today: multi-daemon registry supervision, the repair ladder, OS service registration on all three platforms, the blessed-update gate, the `:3852` status page, and scrubbed escalation telemetry. The richer telemetry pipeline is in too: per-service SQLite ingestion with the poll-and-merge loop, and the SSE feed the Hive portal renders as its live health rail. Vote on what comes next at **[ideas.theapiary.sh](https://ideas.theapiary.sh)**.
 
 <img src="assets/brand/divider-minor.svg" width="100%" height="3">
 
