@@ -6,9 +6,13 @@ For engineers working on the watch loop, health classification, the repair ladde
 
 **Related:**
 - [system-overview.md](./system-overview.md)
+- [health-probe-classification.md](./health-probe-classification.md)
+- [backoff-and-restart-policy.md](./backoff-and-restart-policy.md)
+- [remediation-rungs-deep-dive.md](./remediation-rungs-deep-dive.md)
+- [composition-root.md](./composition-root.md)
 - [telemetry-single-source-of-truth.md](./telemetry-single-source-of-truth.md)
+- [../operations/escalation-and-needs-attention.md](../operations/escalation-and-needs-attention.md)
 - [../data/registry-and-state.md](../data/registry-and-state.md)
-- [../operations/status-page-and-cli.md](../operations/status-page-and-cli.md)
 - [ADR-0002-service-registration-static-registry-plus-runtime-sqlite.md](./ADR-0002-service-registration-static-registry-plus-runtime-sqlite.md)
 ---
 

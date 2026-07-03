@@ -6,7 +6,9 @@ Read this first if you are new to the doctor repo: it explains why the watchdog 
 
 **Related:**
 - [supervision-and-remediation.md](./supervision-and-remediation.md)
+- [composition-root.md](./composition-root.md)
 - [telemetry-single-source-of-truth.md](./telemetry-single-source-of-truth.md)
+- [../standards/zero-dependency-engineering.md](../standards/zero-dependency-engineering.md)
 - [../data/registry-and-state.md](../data/registry-and-state.md)
 - [../operations/status-page-and-cli.md](../operations/status-page-and-cli.md)
 - [../security/trust-boundaries.md](../security/trust-boundaries.md)
@@ -105,8 +107,11 @@ The registry-driven multi-daemon supervision arrived via nectar's PRD-004a, and 
 
 ## Where to go next
 
-- How the watch loop, ladder, and backoff actually behave: [supervision-and-remediation.md](./supervision-and-remediation.md)
-- How telemetry flows from services through doctor to hive: [telemetry-single-source-of-truth.md](./telemetry-single-source-of-truth.md)
+- How the watch loop, ladder, and backoff actually behave: [supervision-and-remediation.md](./supervision-and-remediation.md), then the deep dives on [health probe classification](./health-probe-classification.md), [backoff and restart policy](./backoff-and-restart-policy.md), and [the remediation rungs](./remediation-rungs-deep-dive.md)
+- How the whole process is assembled from one function: [composition-root.md](./composition-root.md)
+- The engineering patterns that make can't-crash possible: [../standards/zero-dependency-engineering.md](../standards/zero-dependency-engineering.md)
+- How telemetry flows from services through doctor to hive: [telemetry-single-source-of-truth.md](./telemetry-single-source-of-truth.md), then the [ingestion pipeline](../telemetry/telemetry-ingestion-pipeline.md), the [SSE producer](../telemetry/sse-producer.md), and [outbound telemetry and privacy](../telemetry/outbound-telemetry-and-privacy.md)
+- The give-up surface and the auto-update engine: [escalation and needs-attention](../operations/escalation-and-needs-attention.md) and [the auto-update engine](../operations/auto-update-engine.md)
 - Every on-disk file doctor reads or writes, with full schemas: [../data/registry-and-state.md](../data/registry-and-state.md)
 - Operating it day to day: [../operations/status-page-and-cli.md](../operations/status-page-and-cli.md) and [../operations/os-service-registration.md](../operations/os-service-registration.md)
 - How it builds, ships, and updates: [../infrastructure/build-and-release.md](../infrastructure/build-and-release.md)

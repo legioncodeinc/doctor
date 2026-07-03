@@ -7,6 +7,9 @@ The security model: what doctor exposes, what it refuses to trust, the attack th
 **Related:**
 - [../architecture/system-overview.md](../architecture/system-overview.md)
 - [../architecture/telemetry-single-source-of-truth.md](../architecture/telemetry-single-source-of-truth.md)
+- [../standards/zero-dependency-engineering.md](../standards/zero-dependency-engineering.md)
+- [../telemetry/outbound-telemetry-and-privacy.md](../telemetry/outbound-telemetry-and-privacy.md)
+- [../telemetry/telemetry-ingestion-pipeline.md](../telemetry/telemetry-ingestion-pipeline.md)
 - [../data/registry-and-state.md](../data/registry-and-state.md)
 - [../infrastructure/build-and-release.md](../infrastructure/build-and-release.md)
 - [../architecture/ADR-0001-hive-telemetry-transport-and-single-source-of-truth.md](../architecture/ADR-0001-hive-telemetry-transport-and-single-source-of-truth.md)

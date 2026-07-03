@@ -58,6 +58,6 @@ Cram last-seen/health/metrics into `doctor.daemons.json`. Rejected because it tu
 ## References
 
 - `doctor/src/registry.ts` - the static registry loader/parser this extends (schema, fallback, fail-soft).
-- nectar [`prd-004`](../../../../../nectar/library/requirements/backlog/prd-004-doctor-registry-and-hive/prd-004-doctor-registry-and-hive-index.md) (PRD-004a registry + 004d registration) this builds on.
+- nectar [`prd-004`](../../../../../nectar/library/requirements/completed/prd-004-doctor-registry-and-hive/prd-004-doctor-registry-and-hive-index.md) (PRD-004a registry + 004d registration) this builds on.
 - the-apiary [`ADR-0002`](../../../../../library/knowledge/private/architecture/ADR-0002-one-line-installer-product-loading-and-install-time-telemetry.md) - the installer that creates/updates registration on install/update/delete.
 - Forthcoming doctor [`prd-001`](../../../requirements/backlog/prd-001-service-registration-and-telemetry-ingestion/prd-001-service-registration-and-telemetry-ingestion-index.md) implements this ADR.

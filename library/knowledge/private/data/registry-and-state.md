@@ -7,6 +7,8 @@ The complete on-disk data reference: the daemon registry schema with every field
 **Related:**
 - [../architecture/supervision-and-remediation.md](../architecture/supervision-and-remediation.md)
 - [../architecture/telemetry-single-source-of-truth.md](../architecture/telemetry-single-source-of-truth.md)
+- [../telemetry/telemetry-ingestion-pipeline.md](../telemetry/telemetry-ingestion-pipeline.md)
+- [../operations/escalation-and-needs-attention.md](../operations/escalation-and-needs-attention.md)
 - [../operations/status-page-and-cli.md](../operations/status-page-and-cli.md)
 - [../security/trust-boundaries.md](../security/trust-boundaries.md)
 - [../architecture/ADR-0002-service-registration-static-registry-plus-runtime-sqlite.md](../architecture/ADR-0002-service-registration-static-registry-plus-runtime-sqlite.md)

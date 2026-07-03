@@ -5,6 +5,9 @@
 The operator's reference: every endpoint on the `:3852` status page, every CLI verb with its real behavior and exit codes, the env vars that tune the watchdog, and a short runbook for the common failures.
 
 **Related:**
+- [cli-deep-dive.md](./cli-deep-dive.md)
+- [escalation-and-needs-attention.md](./escalation-and-needs-attention.md)
+- [auto-update-engine.md](./auto-update-engine.md)
 - [os-service-registration.md](./os-service-registration.md)
 - [../data/registry-and-state.md](../data/registry-and-state.md)
 - [../architecture/supervision-and-remediation.md](../architecture/supervision-and-remediation.md)

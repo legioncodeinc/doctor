@@ -7,10 +7,12 @@ For engineers touching the poll loop, the SQLite reader, the SSE producer, or an
 **Related:**
 - [system-overview.md](./system-overview.md)
 - [supervision-and-remediation.md](./supervision-and-remediation.md)
+- [../telemetry/telemetry-ingestion-pipeline.md](../telemetry/telemetry-ingestion-pipeline.md)
+- [../telemetry/sse-producer.md](../telemetry/sse-producer.md)
+- [../telemetry/outbound-telemetry-and-privacy.md](../telemetry/outbound-telemetry-and-privacy.md)
 - [../data/registry-and-state.md](../data/registry-and-state.md)
 - [../security/trust-boundaries.md](../security/trust-boundaries.md)
 - [ADR-0001-hive-telemetry-transport-and-single-source-of-truth.md](./ADR-0001-hive-telemetry-transport-and-single-source-of-truth.md)
-- [ADR-0002-service-registration-static-registry-plus-runtime-sqlite.md](./ADR-0002-service-registration-static-registry-plus-runtime-sqlite.md)
 ---
 
 ## The shape of the pipeline

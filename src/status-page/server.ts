@@ -149,10 +149,10 @@ function buildSuggestedCommands(
 					break;
 				case "investigate":
 				case "manual-intervention":
-					cmds.push("doctor doctor");
+					cmds.push("doctor diagnose");
 					break;
 				default:
-					cmds.push("doctor doctor");
+					cmds.push("doctor diagnose");
 			}
 		}
 	}

@@ -6,7 +6,10 @@ How the doctor package builds, why it ships with zero runtime dependencies, how 
 
 **Related:**
 - [../operations/os-service-registration.md](../operations/os-service-registration.md)
+- [../operations/auto-update-engine.md](../operations/auto-update-engine.md)
 - [../architecture/system-overview.md](../architecture/system-overview.md)
+- [../standards/zero-dependency-engineering.md](../standards/zero-dependency-engineering.md)
+- [../telemetry/outbound-telemetry-and-privacy.md](../telemetry/outbound-telemetry-and-privacy.md)
 - [../security/trust-boundaries.md](../security/trust-boundaries.md)
 ---
 
