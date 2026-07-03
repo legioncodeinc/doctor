@@ -16,7 +16,7 @@
 
 <p align="center">
   <a href="https://www.npmjs.com/package/@legioncodeinc/doctor"><img src="https://img.shields.io/npm/v/@legioncodeinc/doctor?style=flat-square&color=3EC8A8&label=version" alt="npm version"></a>
-  <img src="https://img.shields.io/badge/harnesses-6-3EC8A8?style=flat-square" alt="6 harnesses">
+  <img src="https://img.shields.io/badge/harnesses-3%20supported%20%7C%203%20in%20progress-3EC8A8?style=flat-square" alt="3 supported, 3 in progress">
   <img src="https://img.shields.io/badge/OS-windows%20%7C%20macos%20%7C%20linux-6E6A62?style=flat-square" alt="Windows, macOS, Linux">
 </p>
 
@@ -238,7 +238,7 @@ No MCP server, no SDK, no inbound ports beyond the loopback status page. That is
 
 <h2 align="center"><a href="https://ideas.theapiary.sh">📍 Status & Roadmap</a></h2>
 
-Doctor is **pre-release (v0.2.x)** and versions independently of the rest of the stack. The watchdog core is real today: multi-daemon registry supervision, the repair ladder, OS service registration on all three platforms, the blessed-update gate, the `:3852` status page, and scrubbed escalation telemetry. The richer telemetry pipeline is in too: per-service SQLite ingestion with the poll-and-merge loop, and the SSE feed the Hive portal renders as its live health rail. Vote on what comes next at **[ideas.theapiary.sh](https://ideas.theapiary.sh)**.
+Doctor is **production ready (v0.2.x)** and versions independently of the rest of the stack. Its full PRD program has shipped and been tested in live scenarios: multi-daemon registry supervision, the repair ladder with exponential backoff, OS service registration on macOS, Linux, and Windows, the blessed-update gate with verify-and-rollback, the `:3852` status page plus machine-readable `/status.json`, and scrubbed escalation telemetry. The richer telemetry pipeline is shipped too: per-service SQLite ingestion with the poll-and-merge loop, and the single SSE feed the Hive portal renders as its live health rail. Vote on what comes next at **[ideas.theapiary.sh](https://ideas.theapiary.sh)**.
 
 <img src="assets/brand/divider-minor.svg" width="100%" height="3">
 

@@ -1,6 +1,6 @@
 # Remediation Rungs Deep Dive
 
-> Category: Architecture | Version: 1.0 | Date: July 2026 | Status: Active | Author: Mario Aldayuz
+> Category: Architecture | Version: 1.1 | Date: July 2026 | Status: Active | Author: Mario Aldayuz
 
 For engineers working on any rung in `src/remediation.ts` or `src/rungs/`: this is each repair action in full detail, the `RungResult` contract every rung honors, the `execFile` command-runner discipline they share, and the credential non-touch boundary that shapes rung 3 and escalation.
 
@@ -75,7 +75,7 @@ The fix keeps `shell: false` and runs npm's own JavaScript entry with the curren
 
 Only past both guards does the rung run the injected `RestartFn` and, on success, call `markRestarted` to start the cooldown clock and re-arm the supervisor's startup grace. A skip counts toward no threshold; a genuine failure (`restart-fn-returned-false`) increments `consecutiveRestartFailures` and advances backoff.
 
-The production default restart is honest about a gap: until the OS-restart seam is wired by the service integration, the injected default logs `compose.restart_no_os_service` and returns `false`. That is a real failure that drives the ladder toward escalation, not a fake success that would hide the missing wiring.
+In production the `RestartFn` is the OS-service restart wired by the service integration, so rung 1 kicks the daemon back through the launchd, systemd, or Scheduled Task registration doctor installed. The fallback (a bare assembly with no restart function injected, as in tests) logs `compose.restart_no_os_service` and returns `false`, a real failure that drives the ladder toward escalation rather than a fake success.
 
 ## Rung 2: reinstall the primary
 

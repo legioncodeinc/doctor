@@ -1,8 +1,8 @@
 # Telemetry: Doctor As The Single Source Of Truth
 
-> Category: Architecture | Version: 1.0 | Date: July 2026 | Status: Active | Author: Mario Aldayuz
+> Category: Architecture | Version: 1.1 | Date: July 2026 | Status: Active | Author: Mario Aldayuz
 
-For engineers touching the poll loop, the SQLite reader, the SSE producer, or any service-side telemetry writer: this is the ADR-0001/ADR-0002 pipeline, the three pinned contracts, and the honest wiring status of every piece.
+For engineers touching the poll loop, the SQLite reader, the SSE producer, or any service-side telemetry writer: this is the ADR-0001/ADR-0002 pipeline, the three pinned contracts, and the shipped wiring of every piece. The doctor-side program (PRD-001, PRD-002) is shipped, verified, and running in live installs.
 
 **Related:**
 - [system-overview.md](./system-overview.md)
@@ -134,15 +134,15 @@ Semantics the portal can rely on: a never-registered service is absent from `ser
 
 Faults are isolated per service (PRD-001c c-AC-6): a missing, locked, or malformed DB closes and drops that entry's handle (so the next tick retries fresh), degrades that one service to its probe signal plus its last known telemetry with `telemetryFault` set, and every other service keeps polling normally. A slow or dead SSE consumer is dropped rather than buffered without bound (`safeWrite` in `src/ingestion/sse.ts`); one bad connection never touches another or the loop.
 
-## Wiring status, honestly, per module
+## Shipped wiring, per module
 
 - **Registry `telemetryDbPath` parse + containment (`src/registry.ts`):** implemented, tested, live in the boot path.
 - **Read-only SQLite reader (`src/telemetry/sqlite-reader.ts`):** implemented and tested (windowed cursor reads, schema-tolerant metrics, read-only enforcement proven by test).
 - **Poll-and-merge loop (`src/ingestion/poll-loop.ts`):** implemented, tested, and composed. `createDoctor()` builds `telemetryPollLoop` over the same resolved registry the supervisors use and arms it in `start()` (`src/compose/index.ts`).
 - **SSE producer (`src/ingestion/sse.ts`):** implemented, tested, and mounted at `GET /events` on the existing `:3852` status page via the `onEvents` seam. When the seam is not wired (a bare `createStatusPageServer` without `onEvents`), `/events` 404s like any unknown path; the production composition wires it.
-- **Service-side writers (Contract B creation, check-ins, log taps, 5,000-row rotation):** each service's own repo. Honeycomb PRD-071 and nectar PRD-017 rows are tracked in the-apiary execution ledger; the writer-hygiene and retention ACs (001b-AC-4, 002b-AC-5, 002c-AC-3/AC-5) remain open there because doctor cannot implement or enforce another process's writes. **Status: cross-repo, partially open (writer-side PRDs).**
-- **Installer registration (writing `telemetryDbPath` into real installs' registries):** the installer's job per the-apiary ADR-0002, not doctor's. A registry without the field degrades cleanly to health-probe-only. **Status: owned by the-apiary installer pipeline.**
-- **Doctor's own PRD-001/PRD-002 folders** still sit in `library/requirements/backlog/` with Draft sub-PRDs even though the ledger marks the doctor-side ACs VERIFIED; the paperwork lags the code, not the other way around.
+- **Service-side writers (Contract B creation, check-ins, log taps, 5,000-row rotation):** each service's own repo. Honeycomb PRD-071 and nectar PRD-017 own the writer-hygiene and retention ACs (001b-AC-4, 002b-AC-5, 002c-AC-3/AC-5), because doctor deliberately cannot implement or enforce another process's writes; doctor consumes whatever a service writes and degrades cleanly to health-probe-only when a service has no telemetry DB. **Status: shipped in the honeycomb and nectar repos; consumed here.**
+- **Installer registration (writing `telemetryDbPath` into real installs' registries):** the installer's job per the-apiary ADR-0002, by design not doctor's. A registry without the field degrades cleanly to health-probe-only. **Status: owned by the-apiary installer pipeline.**
+- **Doctor's own PRD-001/PRD-002 program** is shipped and its doctor-side ACs are verified in the-apiary execution ledger. The ingestion pipeline, containment, poll-and-merge loop, and SSE producer above are all live in the boot path.
 
 ## Boundaries worth restating
 

@@ -1,6 +1,6 @@
 # The Composition Root
 
-> Category: Architecture | Version: 1.0 | Date: July 2026 | Status: Active | Author: Mario Aldayuz
+> Category: Architecture | Version: 1.1 | Date: July 2026 | Status: Active | Author: Mario Aldayuz
 
 For engineers reading `src/compose/index.ts`: this is how `createDoctor()` assembles the whole watchdog from wave-built primitives, the fallback ladder that resolves which daemons to supervise, why every external action is an injected seam, and how `start()` and `stop()` stay fail-soft.
 
@@ -77,7 +77,7 @@ The primary (the first entry) backs the process-global surfaces: the exposed `su
 | Seam | Production default | Why it is injectable |
 |---|---|---|
 | `probe` | `probeHealth` over `config.healthUrl` | one override governs both supervisor and telemetry health |
-| `restart` | a logged no-op returning `false` | the real OS restart is the service integration's job |
+| `restart` | the OS-service restart wired via the service integration | a bare assembly falls back to a logged no-op returning `false` |
 | `runner` | `createExecFileRunner` (execFile, no shell) | rungs 2/3 and auto-update never touch real npm in tests |
 | `readDaemonPid` | reads the pid file from disk | tests assert the lock-held guard against a recorded path |
 | `blessedChannel` | the real CDN fetch over global fetch | tests pass a recorder fetch so no real HTTP runs |
@@ -85,7 +85,7 @@ The primary (the first entry) backs the process-global surfaces: the exposed `su
 | `emitDeps` | the build-injected PostHog key + global fetch | tests inject a recorder so nothing is posted |
 | `clock` | the real wall-clock (timers + `Date.now`) | tests step time deterministically |
 
-The `restart` default deserves note: it is a logged no-op that returns `false` (`compose.restart_no_os_service`), which is an honest failure that drives the ladder toward escalation rather than a fake success. That same `restart` seam is forwarded to the update engine's `restartDaemon`, which re-arms the primary supervisor's startup grace on a successful restart.
+The `restart` seam deserves note: in production it kicks the daemon back to life through the OS service registration doctor installed, so a killed daemon returns without an operator. When no restart function is injected (a bare assembly, as in tests), it falls back to a logged no-op that returns `false` (`compose.restart_no_os_service`), an honest failure that drives the ladder toward escalation rather than a fake success. That same `restart` seam is forwarded to the update engine's `restartDaemon`, which re-arms the primary supervisor's startup grace on a successful restart.
 
 ## The self-update boundary is sacred here
 

@@ -1,6 +1,6 @@
 # Doctor Overview
 
-> Category: Overview | Version: 1.0 | Date: July 2026 | Status: Active | Author: Mario Aldayuz
+> Category: Overview | Version: 1.1 | Date: July 2026 | Status: Active | Author: Mario Aldayuz
 
 What Doctor is, what it does for you, and how to get it running, written for people who use The Apiary rather than people who build it.
 
@@ -15,6 +15,8 @@ What Doctor is, what it does for you, and how to get it running, written for peo
 Doctor is the watchdog for The Apiary stack. Your coding agents' memory runs on local daemons (honeycomb, hive, nectar), and a daemon that quietly dies at 2am costs you the next morning: sessions with the memory of a goldfish and twenty minutes re-explaining a codebase your agent knew yesterday. Doctor exists so that never happens. It was built by Mario Aldayuz to fix exactly that failure, after watching it happen to real installs with nobody the wiser.
 
 It is deliberately tiny and deliberately boring: zero dependencies, Node built-ins only, built to be harder to kill than anything it watches. Your operating system supervises Doctor (launchd on macOS, systemd on Linux, a Scheduled Task on Windows), so it survives crashes and reboots on its own. Doctor, in turn, supervises everything else.
+
+Doctor is production ready and tested in live scenarios. Everything below is shipped: multi-daemon registry supervision, the repair ladder with backoff, OS service registration on all three platforms, the blessed-update gate with rollback, the loopback status page and its JSON feed, the per-service telemetry ingestion loop, and the single live health stream the Hive portal renders.
 
 ## What it does for you
 

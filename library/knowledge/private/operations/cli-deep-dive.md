@@ -1,6 +1,6 @@
 # CLI Deep Dive
 
-> Category: Operations | Version: 1.0 | Date: July 2026 | Status: Active | Author: Mario Aldayuz
+> Category: Operations | Version: 1.1 | Date: July 2026 | Status: Active | Author: Mario Aldayuz
 
 For engineers working on `src/cli/`: this is the CLI's anatomy below the verb table, the single-sourced command surface, the hand-rolled argument parser, the hermetic context, the exit-code discipline, and the Windows shutdown fix that keeps one-shot commands from tripping a libuv assertion.
 
@@ -95,7 +95,7 @@ The fix closes the fetch pool (the root cause), unrefs lingering handles so noth
 - **`opt-out.ts`** centralizes the auto-update opt-out precedence (CLI > env > state > pin) and exposes the `source` field `status` prints.
 - **`incidents-tail.ts`** reads the per-daemon incident shards for `logs`. The `--daemon <name>` argument is guarded: only names in the registry are accepted, and an unregistered or path-shaped value is rejected loudly, because the name is interpolated into a filename. Registry names are validated filename-safe at parse time, so membership implies safety.
 - **`daemon-version.ts`** reads the daemon's reported version from `/health` over `node:http` (not `fetch`), defensively: any error is `null`, so `status` shows "unknown" rather than throwing when the daemon is down.
-- **`service-stub.ts`** owns the `ServiceModule` contract the `install-service` / `uninstall-service` verbs delegate to. When the real service module is not wired, the verb prints a stub message and exits 0; when it is, the verb maps `result.ok` to the exit code and fires the gated, fail-soft lifecycle capture events.
+- **`service-stub.ts`** owns the `ServiceModule` contract the `install-service` / `uninstall-service` verbs delegate to. Production wires the real service module (`src/service/`, which registers and deregisters the OS service on all three platforms), so the verb maps `result.ok` to the exit code and fires the gated, fail-soft lifecycle capture events. The stub is the fallback for a bare assembly with no service module injected: it prints a message and exits 0.
 
 ## Invariants for contributors
 
