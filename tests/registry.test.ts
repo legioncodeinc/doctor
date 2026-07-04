@@ -119,7 +119,9 @@ describe("registry loader", () => {
 		expect(entries[0]).toMatchObject({
 			name: "honeycomb",
 			healthUrl: DEFAULTS.healthUrl,
-			pidPath: join(HOME, ".honeycomb", "daemon.pid"),
+			// PRD-004c: the pid default now resolves under the fleet root, new-first with a
+			// legacy-fallback existence check. Assert consistency with the fallback builder.
+			pidPath: honeycombFallbackEntry(HOME).pidPath,
 			probeIntervalMs: DEFAULTS.probeIntervalMs,
 			startupGraceMs: DEFAULTS.startupGraceMs,
 			restartGiveUpThreshold: DEFAULTS.restartGiveUpThreshold,
@@ -131,12 +133,16 @@ describe("registry loader", () => {
 		const path = writeRegistry(
 			JSON.stringify({ daemons: [{ name: "nectar", healthUrl: "http://127.0.0.1:3854/health" }] }),
 		);
-		const entries = readRegistryFile(path, HOME) ?? [];
+		// Inject an empty env + fixed platform so the fleet root is deterministically
+		// `<HOME>/.apiary` (independent of any host APIARY_HOME/XDG).
+		const entries = readRegistryFile(path, HOME, {}, "linux") ?? [];
 		expect(entries).toHaveLength(1);
 		expect(entries[0]).toEqual({
 			name: "nectar",
 			healthUrl: "http://127.0.0.1:3854/health",
-			pidPath: join(HOME, ".honeycomb", "daemon.pid"),
+			// PRD-004c: the pid default is `<root>/honeycomb/daemon.pid` (neither file exists in
+			// this hermetic HOME, so the new-first branch wins).
+			pidPath: join(HOME, ".apiary", "honeycomb", "daemon.pid"),
 			probeIntervalMs: DEFAULTS.probeIntervalMs,
 			startupGraceMs: DEFAULTS.startupGraceMs,
 			restartGiveUpThreshold: DEFAULTS.restartGiveUpThreshold,
@@ -200,8 +206,9 @@ describe("registry loader", () => {
 		expect(() => readRegistryFile(unsafeName, HOME)).toThrow(RegistryError);
 	});
 
-	it("defaultRegistryPath points under ~/.honeycomb", () => {
-		expect(defaultRegistryPath(HOME)).toBe(join(HOME, ".honeycomb", "doctor.daemons.json"));
+	it("defaultRegistryPath points to <root>/registry.json under the fleet root (ADR-0003 / PRD-004b)", () => {
+		// Inject an empty env + fixed platform so the fleet root is deterministically `<HOME>/.apiary`.
+		expect(defaultRegistryPath(HOME, {}, "linux")).toBe(join(HOME, ".apiary", "registry.json"));
 	});
 
 	it("security (SSRF): a non-loopback healthUrl falls back to the safe loopback default", () => {

@@ -1,5 +1,9 @@
 /** Config resolution tests (PRD-064a defaults + defensive env parsing). */
 
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
+
 import { describe, expect, it } from "vitest";
 
 import { DEFAULTS, resolveConfig } from "../src/config.js";
@@ -88,5 +92,44 @@ describe("resolveConfig", () => {
 		expect(resolveConfig({ DOCTOR_RESTART_COOLDOWN_MS: "-1" }, HOME).restartCooldownMs).toBe(
 			DEFAULTS.restartCooldownMs,
 		);
+	});
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// PRD-004a: doctor's own workspace under the neutral fleet root (ADR-0003)
+// ────────────────────────────────────────────────────────────────────────────
+
+describe("resolveConfig fleet-root workspace (PRD-004a / ADR-0003)", () => {
+	it("a-AC-1 / AC-1 / AC-8: with no overrides the workspace is <home>/.apiary/doctor (never under ~/.honeycomb)", () => {
+		const cfg = resolveConfig({}, HOME, "linux");
+		expect(cfg.workspaceDir).toBe(join(HOME, ".apiary", "doctor"));
+		// AC-8: no new writes land under the legacy ~/.honeycomb/doctor.
+		expect(cfg.workspaceDir).not.toContain(".honeycomb");
+	});
+
+	it("a-AC-2 / AC-2: APIARY_HOME wins for the workspace on every platform", () => {
+		for (const platform of ["linux", "darwin", "win32"] as const) {
+			const cfg = resolveConfig({ APIARY_HOME: "/srv/apiary", XDG_STATE_HOME: "/xdg" }, HOME, platform);
+			expect(cfg.workspaceDir).toBe(join("/srv/apiary", "doctor"));
+		}
+	});
+
+	it("a-AC-2: on Linux with $XDG_STATE_HOME set, the workspace is $XDG_STATE_HOME/apiary/doctor", () => {
+		const cfg = resolveConfig({ XDG_STATE_HOME: "/xdg/state" }, HOME, "linux");
+		expect(cfg.workspaceDir).toBe(join("/xdg/state", "apiary", "doctor"));
+	});
+
+	it("a-AC-7: DOCTOR_WORKSPACE_DIR still wins over the new fleet-root default", () => {
+		const cfg = resolveConfig({ DOCTOR_WORKSPACE_DIR: "/custom/ws", APIARY_HOME: "/srv/apiary" }, HOME, "linux");
+		expect(cfg.workspaceDir).toBe("/custom/ws");
+	});
+});
+
+describe("doctor design principle 1 (module AC-9): zero runtime dependencies", () => {
+	it("AC-9: package.json declares no runtime `dependencies` (Node built-ins only)", () => {
+		const pkgPath = join(dirname(fileURLToPath(import.meta.url)), "..", "package.json");
+		const pkg = JSON.parse(readFileSync(pkgPath, "utf8")) as { dependencies?: Record<string, string> };
+		// Either no dependencies key at all, or an empty one: no external runtime package is added.
+		expect(Object.keys(pkg.dependencies ?? {})).toEqual([]);
 	});
 });

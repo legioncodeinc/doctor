@@ -22,6 +22,10 @@ export default defineConfig({
 	test: {
 		environment: "node",
 		include: ["tests/**/*.test.ts"],
+		// Hermetic-home guard (tests/setup.ts): swaps HOME/USERPROFILE to a per-file temp dir
+		// and clears APIARY_HOME/XDG_STATE_HOME before any test module loads, so no test can
+		// read or write the real user home through a default `os.homedir()` seam.
+		setupFiles: ["tests/setup.ts"],
 		coverage: {
 			provider: "v8",
 			include: ["src/**/*.ts"],

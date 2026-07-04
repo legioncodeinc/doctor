@@ -25,6 +25,7 @@ import {
 	createLifecycleTelemetry,
 	emitCaptureEvent,
 	installIdFilePath,
+	legacyInstallIdFilePath,
 	resolveDistinctId,
 	type CaptureDeps,
 } from "../../src/telemetry/capture.js";
@@ -365,6 +366,65 @@ describe("distinct_id preference", () => {
 		const id = resolveDistinctId({
 			homeDir: FAKE_HOME,
 			readFile: (): string => "  \n",
+			deviceId: FAKE_DEVICE_ID,
+		});
+		expect(id).toBe(FAKE_DEVICE_ID);
+	});
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// PRD-004b b-AC-7: install-id relocated to the fleet root with a legacy fallback
+// ────────────────────────────────────────────────────────────────────────────
+
+describe("install-id relocation (PRD-004b b-AC-7)", () => {
+	// Deterministic fleet root: inject env {} + platform "linux" so the new install-id path
+	// is `<HOME>/.apiary/install-id` and the legacy is `<HOME>/.honeycomb/install-id`.
+	const FLEET = { env: {}, platform: "linux" as const };
+	const newPath = installIdFilePath(FAKE_HOME, {}, "linux");
+	const legacyPath = legacyInstallIdFilePath(FAKE_HOME);
+
+	it("b-AC-7: the NEW `<root>/install-id` location wins when present", () => {
+		const readPaths: string[] = [];
+		const id = resolveDistinctId({
+			homeDir: FAKE_HOME,
+			...FLEET,
+			readFile: (path: string): string => {
+				readPaths.push(path);
+				if (path === newPath) return "new-install-id";
+				if (path === legacyPath) return "legacy-install-id";
+				throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+			},
+			deviceId: FAKE_DEVICE_ID,
+		});
+		expect(id).toBe("new-install-id");
+		// The new location is read first (and short-circuits before the legacy read).
+		expect(readPaths[0]).toBe(newPath);
+	});
+
+	it("b-AC-7: when only the legacy `~/.honeycomb/install-id` exists, the legacy value is used", () => {
+		const readPaths: string[] = [];
+		const id = resolveDistinctId({
+			homeDir: FAKE_HOME,
+			...FLEET,
+			readFile: (path: string): string => {
+				readPaths.push(path);
+				if (path === legacyPath) return "legacy-install-id";
+				throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+			},
+			deviceId: FAKE_DEVICE_ID,
+		});
+		expect(id).toBe("legacy-install-id");
+		// Both locations are probed, new-first then legacy.
+		expect(readPaths).toEqual([newPath, legacyPath]);
+	});
+
+	it("b-AC-7: when neither install-id exists, the device-id fallback applies unchanged", () => {
+		const id = resolveDistinctId({
+			homeDir: FAKE_HOME,
+			...FLEET,
+			readFile: (): string => {
+				throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+			},
 			deviceId: FAKE_DEVICE_ID,
 		});
 		expect(id).toBe(FAKE_DEVICE_ID);

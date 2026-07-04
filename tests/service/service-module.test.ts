@@ -78,7 +78,7 @@ describe("install - writes the unit file then runs the manager argv", () => {
 
 		const result = await module.install();
 
-		const staged = "C:\\Users\\t/.honeycomb/doctor/doctor-task.xml";
+		const staged = "C:\\Users\\t/.apiary/doctor/doctor-task.xml";
 		// IRD-192 AC-2: the staged XML carries the Task-Scheduler-valid PT1M interval.
 		expect(fs.files.get(staged)).toContain("<Interval>PT1M</Interval>");
 		expect(fs.files.get(staged)).toContain("<Task ");
@@ -162,7 +162,7 @@ describe("install - writes the unit file then runs the manager argv", () => {
 		// this failure mode is diagnosable from the CLI's own output alone.
 		expect(result.message).toContain("incorrectly formatted or out of range");
 		// The staged XML (now with PT1M) is still laid down for inspection.
-		const staged = "C:\\Users\\t/.honeycomb/doctor/doctor-task.xml";
+		const staged = "C:\\Users\\t/.apiary/doctor/doctor-task.xml";
 		expect(fs.files.get(staged)).toContain("<Interval>PT1M</Interval>");
 	});
 
@@ -232,7 +232,7 @@ describe("uninstall - deregisters then removes the unit file (AC-064b.5)", () =>
 		await module.uninstall();
 
 		expect(runner.calls[0]).toEqual({ command: "schtasks", args: ["/Delete", "/TN", "doctor", "/F"] });
-		expect(fs.removed).toContain("C:\\Users\\t/.honeycomb/doctor/doctor-task.xml");
+		expect(fs.removed).toContain("C:\\Users\\t/.apiary/doctor/doctor-task.xml");
 	});
 
 	it("a missing unit during uninstall is tolerated (idempotent), still reports cleanly", async () => {

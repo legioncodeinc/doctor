@@ -9,9 +9,16 @@
  * exists to fix. One lock serializes them.
  *
  * The lock is the EXCLUSIVE-create of a small JSON file at
- * `~/.honeycomb/doctor/install.lock` (the workspace dir, injected). `wx` flag =
- * "create, fail if it already exists" = the atomic test-and-set the mutex needs; no
- * second process can win the same create.
+ * `<root>/doctor/install.lock` (the workspace dir, injected; `<root>/doctor` per
+ * ADR-0003 / PRD-004a). `wx` flag = "create, fail if it already exists" = the atomic
+ * test-and-set the mutex needs; no second process can win the same create.
+ *
+ * LEGACY-HONEYCOMB-WINDOW (PRD-004a design): the install lock is deliberately NOT
+ * migrated as a live file. Instead, acquisition also honors a lock still present at the
+ * LEGACY workspace (`~/.honeycomb/doctor/install.lock`, injected as `legacyWorkspaceDir`)
+ * with the SAME staleness semantics: a live legacy holder (a still-running pre-migration
+ * doctor mid-install) blocks acquisition at the new path, and a stale legacy lock is
+ * cleaned best-effort. New acquisitions happen only at the new path.
  *
  * Staleness (design principle 1, "incapable of crashing"): a process that dies
  * mid-install would otherwise wedge the lock forever. So an EXISTING lock whose
@@ -62,6 +69,14 @@ export interface InstallLockClock {
 export interface InstallLockOptions {
 	/** Doctor's workspace dir; `install.lock` is created under it. */
 	readonly workspaceDir: string;
+	/**
+	 * LEGACY-HONEYCOMB-WINDOW (PRD-004a design): the pre-migration workspace dir
+	 * (`~/.honeycomb/doctor`). When set, acquisition also checks `install.lock` there with
+	 * the same staleness semantics: a LIVE legacy holder blocks acquisition, a STALE legacy
+	 * lock is removed best-effort. Omitted (or equal to `workspaceDir`) means no legacy
+	 * check; drop this option when the migration window closes.
+	 */
+	readonly legacyWorkspaceDir?: string;
 	/** Logger for the lock's lifecycle (held/stale/acquired); never a credential. */
 	readonly logger: Logger;
 	/** Age in ms past which a held lock is stolen as abandoned (default 10m). */
@@ -114,6 +129,62 @@ export function createInstallLock(options: InstallLockOptions): InstallLock {
 		return resolveInBase(options.workspaceDir, "install.lock");
 	}
 
+	/**
+	 * LEGACY-HONEYCOMB-WINDOW (PRD-004a design): honor a lock still held at the LEGACY
+	 * workspace by a not-yet-migrated doctor process. Returns true when a LIVE legacy
+	 * holder exists (the caller must back off); a STALE legacy lock is removed best-effort
+	 * (never migrated, never honored) and a garbage body is judged by file mtime, exactly
+	 * mirroring the primary lock's staleness semantics. NEVER throws: any failure inspecting
+	 * the legacy location resolves to "not held" so a broken legacy dir cannot wedge installs.
+	 */
+	function legacyLockHeld(): boolean {
+		const legacyDir = options.legacyWorkspaceDir;
+		// No legacy dir configured, or it IS the active workspace (an operator pinned
+		// DOCTOR_WORKSPACE_DIR to the legacy location): the primary check already covers it.
+		if (legacyDir === undefined || legacyDir === options.workspaceDir) return false;
+		let legacyPath: string;
+		try {
+			legacyPath = resolveInBase(legacyDir, "install.lock");
+		} catch {
+			// A containment violation in the legacy dir means we cannot safely inspect it;
+			// treat as not held rather than wedging every acquisition through the window.
+			return false;
+		}
+
+		const body = readLockBody(legacyPath);
+		if (body !== null) {
+			const age = now() - body.acquiredAt;
+			if (age < staleMs) {
+				options.logger.info("install_lock.legacy_held", { byHolder: body.holder, ageMs: age });
+				return true;
+			}
+			// Stale: the pre-migration holder is gone. Clean it up (best-effort) so the window
+			// check stops firing; the legacy lock is never honored and never migrated.
+			try {
+				rmSync(legacyPath, { force: true });
+				options.logger.warn("install_lock.legacy_stale_removed", { prevHolder: body.holder, ageMs: age });
+			} catch {
+				// A failed cleanup leaves a stale file that stays ignorable (age only grows).
+			}
+			return false;
+		}
+
+		// No parseable body: absent (the common case) or garbage. Mirror the primary lock's
+		// mtime-based judgment for a body-less file.
+		try {
+			const age = now() - statSync(legacyPath).mtimeMs;
+			if (age < staleMs) {
+				options.logger.warn("install_lock.legacy_held_unparseable", {});
+				return true;
+			}
+			rmSync(legacyPath, { force: true });
+		} catch {
+			// statSync threw: the file does not exist (not held) or is unreadable (treat as
+			// not held; the primary lock is the real mutex, this is a window-only courtesy).
+		}
+		return false;
+	}
+
 	/** Write the lock file with the exclusive-create flag. Throws iff it already exists. */
 	function exclusiveCreate(filePath: string, body: InstallLockBody): void {
 		mkdirSync(options.workspaceDir, { recursive: true });
@@ -150,6 +221,11 @@ export function createInstallLock(options: InstallLockOptions): InstallLock {
 				// A containment violation means we cannot safely touch the lock file; back off.
 				return null;
 			}
+
+			// LEGACY-HONEYCOMB-WINDOW (PRD-004a design): a live pre-migration holder at the
+			// legacy workspace blocks acquisition at the new path, so two install flows can
+			// never run concurrently across the migration window.
+			if (legacyLockHeld()) return null;
 
 			const owner = randomUUID();
 			const body: InstallLockBody = { owner, holder, acquiredAt: now() };

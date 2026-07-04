@@ -90,3 +90,78 @@ describe("install lock", () => {
 		expect(() => lock.acquire("reinstall")).not.toThrow();
 	});
 });
+
+// ────────────────────────────────────────────────────────────────────────────
+// PRD-004a design: "a lock present in the legacy dir is honored by a
+// legacy-fallback staleness check ... new acquisitions happen only at the new path"
+// (LEGACY-HONEYCOMB-WINDOW; QA Warning 1)
+// ────────────────────────────────────────────────────────────────────────────
+
+describe("PRD-004a design: legacy install-lock fallback staleness check", () => {
+	let legacyDir: string;
+	beforeEach(() => {
+		// A sibling temp dir standing in for the pre-migration `~/.honeycomb/doctor`.
+		legacyDir = mkdtempSync(join(tmpdir(), "doctor-lock-legacy-"));
+	});
+	afterEach(() => {
+		rmSync(legacyDir, { recursive: true, force: true });
+	});
+
+	/** Write a legacy lock body as a pre-migration doctor would have. */
+	function writeLegacyLock(acquiredAt: number): void {
+		writeFileSync(
+			join(legacyDir, "install.lock"),
+			`${JSON.stringify({ owner: "legacy-owner", holder: "reinstall", acquiredAt })}\n`,
+			"utf8",
+		);
+	}
+
+	it("PRD-004a design: a LIVE legacy holder blocks acquisition at the new path (no concurrent installs across the window)", () => {
+		const clock = controllableClock(10_000);
+		writeLegacyLock(9_500); // age 500ms < staleMs: a still-running pre-migration doctor
+		const lock = createInstallLock({ workspaceDir: dir, legacyWorkspaceDir: legacyDir, logger: silentLogger, staleMs: 1_000, clock });
+
+		expect(lock.acquire("auto-update")).toBeNull();
+		// Acquisition never happened at the new path, and the live legacy lock is untouched.
+		expect(existsSync(join(dir, "install.lock"))).toBe(false);
+		expect(existsSync(join(legacyDir, "install.lock"))).toBe(true);
+	});
+
+	it("PRD-004a design: a STALE legacy lock is cleaned and acquisition proceeds at the new path only", () => {
+		const clock = controllableClock(10_000);
+		writeLegacyLock(1_000); // age 9000ms >= staleMs: an abandoned pre-migration lock
+		const lock = createInstallLock({ workspaceDir: dir, legacyWorkspaceDir: legacyDir, logger: silentLogger, staleMs: 1_000, clock });
+
+		const handle = lock.acquire("auto-update");
+		expect(handle).not.toBeNull();
+		// The new acquisition landed ONLY at the new path; the stale legacy lock was removed
+		// (never migrated, never honored).
+		expect(existsSync(join(dir, "install.lock"))).toBe(true);
+		expect(existsSync(join(legacyDir, "install.lock"))).toBe(false);
+	});
+
+	it("PRD-004a design: no legacy lock present means the fallback check is a transparent no-op", () => {
+		const lock = createInstallLock({ workspaceDir: dir, legacyWorkspaceDir: legacyDir, logger: silentLogger });
+		expect(lock.acquire("reinstall")).not.toBeNull();
+	});
+
+	it("PRD-004a design: a legacyWorkspaceDir equal to the active workspace never self-blocks (pinned-to-legacy operator)", () => {
+		// An operator who pinned DOCTOR_WORKSPACE_DIR to the legacy dir: the primary check IS
+		// the legacy check, so the fallback must not read the freshly-acquired lock as a
+		// foreign holder.
+		const lock = createInstallLock({ workspaceDir: dir, legacyWorkspaceDir: dir, logger: silentLogger });
+		const first = lock.acquire("reinstall");
+		expect(first).not.toBeNull();
+		first?.release();
+		expect(lock.acquire("auto-update")).not.toBeNull();
+	});
+
+	it("PRD-004a design: a fresh-but-garbage legacy lock body is treated as held (mtime-judged), never a throw", () => {
+		const clock = controllableClock(Date.now());
+		// A garbage body whose file mtime is NOW: cannot prove abandoned -> back off.
+		writeFileSync(join(legacyDir, "install.lock"), "not-json", "utf8");
+		const lock = createInstallLock({ workspaceDir: dir, legacyWorkspaceDir: legacyDir, logger: silentLogger, staleMs: 60_000, clock });
+		expect(() => lock.acquire("reinstall")).not.toThrow();
+		expect(lock.acquire("reinstall")).toBeNull();
+	});
+});

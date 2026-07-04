@@ -13,16 +13,21 @@
  *   - target /health URL    http://127.0.0.1:3850/health  (the primary daemon)
  *   - backoff floor / ceil  1s / 30s  (064a scope: geometric, floor 1s, ceiling 30s)
  *   - restart give-up        3   (OD-4 resolved: reinstall after 3 failed restarts)
- *   - workspace dir          ~/.honeycomb/doctor  (PRD-064 data-model section)
+ *   - workspace dir          <root>/doctor  (ADR-0003 fleet root, PRD-004a)
+ *
+ * ADR-0003 relocation (PRD-004): doctor's workspace dir and the honeycomb primary pid
+ * default now resolve under the neutral fleet root `~/.apiary` via the shared
+ * `resolveApiaryRoot` helper (was `~/.honeycomb`). The pid default is new-first with a
+ * legacy-fallback existence check (PRD-004c) so a mixed, mid-migration fleet keeps working.
  *
  * Secret-free by construction: no value here is a credential. The daemon PID/lock
- * path (~/.honeycomb/daemon.pid) is included because rung 1 must respect it (064a
+ * path (`<root>/honeycomb/daemon.pid`) is included because rung 1 must respect it (064a
  * AC-064a.6 idempotency), and it mirrors the daemon's own `runtimeDir()/daemon.pid`.
  */
 
 import { homedir } from "node:os";
-import { join } from "node:path";
 
+import { defaultHoneycombPidPath, doctorStateDir, resolveApiaryRoot } from "./apiary-root.js";
 import { DEFAULT_STATUS_PAGE_PORT } from "./status-page/server.js";
 
 /** The fully-resolved, validated watchdog config the supervisor consumes. */
@@ -47,9 +52,9 @@ export interface DoctorConfig {
 	readonly restartCooldownMs: number;
 	/** How often the install-health telemetry snapshot is emitted, in ms (default 3600000 = 60 min, PRD-064d AC-064d.2). */
 	readonly installHealthIntervalMs: number;
-	/** Doctor's own workspace dir (default ~/.honeycomb/doctor). */
+	/** Doctor's own workspace dir (default `<root>/doctor` under the fleet root). */
 	readonly workspaceDir: string;
-	/** The primary daemon PID/lock file Doctor respects (default ~/.honeycomb/daemon.pid). */
+	/** The primary daemon PID/lock file Doctor respects (default `<root>/honeycomb/daemon.pid`, legacy-fallback aware). */
 	readonly daemonPidPath: string;
 }
 
@@ -150,9 +155,15 @@ function parseHealthUrl(raw: string | undefined, fallback: string): string {
 export function resolveConfig(
 	env: NodeJS.ProcessEnv = process.env,
 	home: string = homedir(),
+	platform: NodeJS.Platform = process.platform,
 ): DoctorConfig {
-	const defaultWorkspace = join(home, ".honeycomb", "doctor");
-	const defaultPidPath = join(home, ".honeycomb", "daemon.pid");
+	// ADR-0003: doctor's own state lives under the neutral fleet root at <root>/doctor,
+	// resolved from os.homedir() (never process.cwd()) through the one shared helper.
+	const apiaryRoot = resolveApiaryRoot(env, home, platform);
+	const defaultWorkspace = doctorStateDir(apiaryRoot);
+	// PRD-004c: the honeycomb primary pid default is new-first with a legacy-fallback
+	// existence check so a not-yet-migrated honeycomb keeps being supervised.
+	const defaultPidPath = defaultHoneycombPidPath(apiaryRoot, home);
 
 	const floor = parsePositiveInt(env.DOCTOR_BACKOFF_FLOOR_MS, DEFAULTS.backoffFloorMs);
 	const ceilingRaw = parsePositiveInt(env.DOCTOR_BACKOFF_CEILING_MS, DEFAULTS.backoffCeilingMs);

@@ -7,6 +7,13 @@
  * `npm ls -g`). This test proves the production CLI wiring keeps the status seam on `/health`
  * by pointing `buildCliContext` at a real mock `/health` server and asserting it reports the
  * server's version -- a value `npm ls` could never produce.
+ *
+ * Hermetic home: `buildCliContext` resolves its registry, device id, and workspace from
+ * `os.homedir()`. The suite-wide guard (tests/setup.ts) swaps HOME/USERPROFILE to a per-file
+ * temp dir before this module loads, so the context reads an EMPTY fake home (registry absent
+ * -> honeycomb-primary fallback at the env-injected health URL) and any minted device.json
+ * lands in the temp dir, never the real `~/.apiary`. The test therefore passes identically on
+ * a machine where the product has really been used.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";

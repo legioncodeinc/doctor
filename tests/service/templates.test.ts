@@ -45,8 +45,9 @@ describe("renderLaunchdPlist (macOS)", () => {
 		expect(xml).toContain(`<integer>${RESTART_SEC}</integer>`);
 	});
 
-	it("writes logs under the user home (no root required)", () => {
-		expect(xml).toContain("/Users/t/.honeycomb/doctor/launchd.out.log");
+	it("writes logs under the fleet root doctor state dir (no root required)", () => {
+		// ADR-0003 (PRD-004a): doctor's state moved from ~/.honeycomb/doctor to <root>/doctor.
+		expect(xml).toContain("/Users/t/.apiary/doctor/launchd.out.log");
 	});
 });
 

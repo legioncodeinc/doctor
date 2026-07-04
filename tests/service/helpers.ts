@@ -81,9 +81,13 @@ export function createMemoryFs(failWrite = false): MemoryFs {
 
 /** A fixed environment for a given platform (so tests never read the real host). */
 export function fixedEnv(overrides: Partial<ServiceEnvironment> & Pick<ServiceEnvironment, "platform">): ServiceEnvironment {
+	const home = overrides.home ?? "/home/tester";
 	return {
 		platform: overrides.platform,
-		home: overrides.home ?? "/home/tester",
+		home,
+		// ADR-0003 / PRD-004a: the resolved fleet root. Default `<home>/.apiary` with a forward
+		// slash so the composed `<root>/doctor` stateDir is deterministic across test hosts.
+		apiaryRoot: overrides.apiaryRoot ?? `${home}/.apiary`,
 		privileged: overrides.privileged ?? false,
 		execPath: overrides.execPath ?? "/usr/local/bin/doctor",
 		...(overrides.preferSystemScope !== undefined ? { preferSystemScope: overrides.preferSystemScope } : {}),

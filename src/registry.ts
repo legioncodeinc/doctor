@@ -35,10 +35,18 @@
  * Built-ins only: node:fs + node:os + node:path.
  */
 
-import { readFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync } from "node:fs";
 import { homedir } from "node:os";
-import { isAbsolute, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 
+import {
+	apiaryProductDir,
+	defaultHoneycombPidPath,
+	legacyHoneycombRoot,
+	legacyTelemetryRoot,
+	productTelemetryRoot,
+	resolveApiaryRoot,
+} from "./apiary-root.js";
 import { DEFAULTS } from "./config.js";
 import { assertWithinBase } from "./safe-path.js";
 
@@ -92,18 +100,52 @@ export interface LoadRegistryOptions {
  * as "supervise nothing". doctor's boot catches this at the top level and reports it.
  */
 export class RegistryError extends Error {
-	constructor(message: string) {
+	/**
+	 * The registry file the error is about, when known. Set by {@link readRegistryFile} so a
+	 * caller surfacing the failure (the compose needs-attention banner) can name the file that
+	 * is ACTUALLY malformed, which mid-window may be the legacy file rather than the new one.
+	 */
+	registryPath?: string;
+
+	constructor(message: string, registryPath?: string) {
 		super(message);
 		this.name = "RegistryError";
+		if (registryPath !== undefined) this.registryPath = registryPath;
 	}
 }
 
 /** A filename-safe daemon name: a leading alphanumeric then alphanumerics, dashes, underscores. */
 const NAME_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9_-]*$/;
 
-/** The default registry file location, alongside the other `~/.honeycomb` artifacts. */
-export function defaultRegistryPath(home: string = homedir()): string {
-	return join(home, ".honeycomb", "doctor.daemons.json");
+/**
+ * The default registry file location: the fleet-shared `<root>/registry.json` (ADR-0003 /
+ * PRD-004b), where `<root>` is the neutral fleet root resolved by {@link resolveApiaryRoot}.
+ * Was `~/.honeycomb/doctor.daemons.json`; the shape is unchanged, only the location moves.
+ */
+export function defaultRegistryPath(
+	home: string = homedir(),
+	env: NodeJS.ProcessEnv = process.env,
+	platform: NodeJS.Platform = process.platform,
+): string {
+	return join(resolveApiaryRoot(env, home, platform), "registry.json");
+}
+
+/**
+ * LEGACY-HONEYCOMB-WINDOW: the pre-migration registry location
+ * `~/.honeycomb/doctor.daemons.json` (PRD-004b). Read-side fallback + one-time-migration
+ * source only; removed when ADR-0003's window closes.
+ */
+export function legacyRegistryPath(home: string = homedir()): string {
+	return join(legacyHoneycombRoot(home), "doctor.daemons.json");
+}
+
+/**
+ * LEGACY-HONEYCOMB-WINDOW: the name the legacy registry is renamed to after a successful
+ * one-time migration (PRD-004b default, confirmed). Kept (never deleted) so nothing
+ * unrecovered is ever destroyed, and it stops the merge rule from re-reading a stale copy.
+ */
+export function migratedLegacyRegistryPath(home: string = homedir()): string {
+	return `${legacyRegistryPath(home)}.migrated`;
 }
 
 /**
@@ -111,11 +153,16 @@ export function defaultRegistryPath(home: string = homedir()): string {
  * registry file is absent. Mirrors {@link DEFAULTS} + the default PID path from
  * `config.ts`.
  */
-export function honeycombFallbackEntry(home: string = homedir()): DaemonEntry {
+export function honeycombFallbackEntry(
+	home: string = homedir(),
+	env: NodeJS.ProcessEnv = process.env,
+	platform: NodeJS.Platform = process.platform,
+): DaemonEntry {
 	return {
 		name: "honeycomb",
 		healthUrl: DEFAULTS.healthUrl,
-		pidPath: join(home, ".honeycomb", "daemon.pid"),
+		// PRD-004c: new-first `<root>/honeycomb/daemon.pid`, legacy-fallback aware.
+		pidPath: defaultHoneycombPidPath(resolveApiaryRoot(env, home, platform), home),
 		probeIntervalMs: DEFAULTS.probeIntervalMs,
 		startupGraceMs: DEFAULTS.startupGraceMs,
 		restartGiveUpThreshold: DEFAULTS.restartGiveUpThreshold,
@@ -191,14 +238,29 @@ function coercePidPath(value: unknown, home: string, fallback: string): string {
  * registry entry with an unconstrained `telemetryDbPath` would let doctor open ANY
  * user-readable SQLite file and, if it happens to carry Contract-B-shaped tables, poll
  * and forward its contents over the unauthenticated loopback SSE stream (`/events`).
- * Contract A pins telemetry databases under `~/.honeycomb/telemetry/`; this coercion
- * enforces that containment with {@link assertWithinBase} (the same defense-in-depth
- * helper `pidPath`'s composed paths already route through elsewhere in this codebase).
- * A path that escapes the trusted root degrades to `undefined` (health-probe-only),
- * mirroring `coerceHealthUrl`'s fallback-on-invalid-input posture -- never a crash, never
- * a silently-honored escape.
+ * The path must live under a TRUSTED telemetry root; this coercion enforces that
+ * containment with {@link assertWithinBase} (the same defense-in-depth helper `pidPath`'s
+ * composed paths already route through elsewhere in this codebase). A path that escapes
+ * every trusted root degrades to `undefined` (health-probe-only), mirroring
+ * `coerceHealthUrl`'s fallback-on-invalid-input posture -- never a crash, never a
+ * silently-honored escape.
+ *
+ * PRD-004c (ADR-0003 migration): the single legacy root `~/.honeycomb/telemetry/` is
+ * replaced by an ORDERED set of trusted roots, WITHOUT weakening containment:
+ *   - `<root>/<entry-name>/telemetry` bound to THIS entry's OWN validated product name
+ *     (the tight per-own-name default, PRD-004c); an entry may not point at another
+ *     product's telemetry dir, matching "no product writes into another product's subdir".
+ *   - LEGACY-HONEYCOMB-WINDOW: the legacy `~/.honeycomb/telemetry` root, accepted for the
+ *     duration of the migration window only, so a not-yet-migrated service keeps ingesting.
+ * The value must satisfy `assertWithinBase` against AT LEAST ONE root; traversal (`..`),
+ * relative paths, and (on Windows) drive-letter re-anchoring are all still rejected.
  */
-function coerceTelemetryDbPath(value: unknown, home: string): string | undefined {
+function coerceTelemetryDbPath(
+	value: unknown,
+	home: string,
+	root: string,
+	entryName: string,
+): string | undefined {
 	if (typeof value !== "string" || value.trim() === "") return undefined;
 	const expanded = expandTilde(value.trim(), home);
 	// A RELATIVE post-`~` path is rejected outright: it would anchor against whatever
@@ -206,18 +268,27 @@ function coerceTelemetryDbPath(value: unknown, home: string): string | undefined
 	// one cwd while the poll loop later reopens a DIFFERENT file under another. Only an
 	// absolute path has one stable meaning to validate and later open.
 	if (!isAbsolute(expanded)) return undefined;
-	const trustedRoot = join(home, ".honeycomb", "telemetry");
-	try {
-		// Validate the EXACT value returned (the path the poll loop later opens): resolve
-		// normalizes and, on Windows, pins the drive letter of a drive-letter-less absolute
-		// path, and `assertWithinBase` returns the very candidate it checked, so no
-		// differently-anchored reinterpretation can happen downstream.
-		return assertWithinBase(trustedRoot, resolve(expanded));
-	} catch {
-		// Escapes the trusted telemetry root: treat exactly like an absent field rather
-		// than honoring an out-of-bounds path.
-		return undefined;
+	// The ordered trusted roots: the entry's OWN per-product telemetry dir under the fleet
+	// root first (the tight default), then the legacy honeycomb root for the window.
+	const trustedRoots = [
+		productTelemetryRoot(root, entryName),
+		// LEGACY-HONEYCOMB-WINDOW: drop this entry when the migration window closes.
+		legacyTelemetryRoot(home),
+	];
+	// Resolve ONCE so the exact value validated is the exact value the poll loop later opens
+	// (resolve normalizes and, on Windows, pins the drive letter of a drive-letter-less
+	// absolute path). `assertWithinBase` returns the very candidate it checked.
+	const candidate = resolve(expanded);
+	for (const trustedRoot of trustedRoots) {
+		try {
+			return assertWithinBase(trustedRoot, candidate);
+		} catch {
+			// Not under this root: try the next. Falling through all of them means reject.
+		}
 	}
+	// Escapes every trusted telemetry root: treat exactly like an absent field rather than
+	// honoring an out-of-bounds path.
+	return undefined;
 }
 
 /**
@@ -235,15 +306,19 @@ function coerceName(value: unknown, index: number): string {
 }
 
 /** Parse one raw entry into a fully-defaulted {@link DaemonEntry}. Missing optionals resolve to defaults (a-AC-3). */
-function parseEntry(raw: unknown, index: number, home: string): DaemonEntry {
+function parseEntry(raw: unknown, index: number, home: string, root: string): DaemonEntry {
 	if (raw === null || typeof raw !== "object") {
 		throw new RegistryError(`registry daemon at index ${index} is not an object`);
 	}
 	const o = raw as Record<string, unknown>;
-	const defaultPidPath = join(home, ".honeycomb", "daemon.pid");
-	const telemetryDbPath = coerceTelemetryDbPath(o.telemetryDbPath, home);
+	// Validate the name FIRST: the telemetry trusted-root binding is per-own-name (PRD-004c),
+	// so it needs the already-validated, filename-safe name before it can build the root set.
+	const name = coerceName(o.name, index);
+	// PRD-004c: the honeycomb primary pid default is new-first with a legacy-fallback check.
+	const defaultPidPath = defaultHoneycombPidPath(root, home);
+	const telemetryDbPath = coerceTelemetryDbPath(o.telemetryDbPath, home, root, name);
 	return {
-		name: coerceName(o.name, index),
+		name,
 		healthUrl: coerceHealthUrl(o.healthUrl, DEFAULTS.healthUrl),
 		pidPath: coercePidPath(o.pidPath, home, defaultPidPath),
 		probeIntervalMs: coercePositiveInt(o.probeIntervalMs, DEFAULTS.probeIntervalMs),
@@ -261,7 +336,15 @@ function parseEntry(raw: unknown, index: number, home: string): DaemonEntry {
  * malformed (unparseable JSON, not an object, missing/empty `daemons` array, or a bad
  * entry) so a real misconfiguration fails loudly instead of silently supervising nothing.
  */
-export function readRegistryFile(registryPath: string, home: string = homedir()): DaemonEntry[] | null {
+export function readRegistryFile(
+	registryPath: string,
+	home: string = homedir(),
+	env: NodeJS.ProcessEnv = process.env,
+	platform: NodeJS.Platform = process.platform,
+): DaemonEntry[] | null {
+	// Resolve the fleet root ONCE per read so every entry's telemetry trusted-root binding
+	// and pid default share one deterministic root (PRD-004c).
+	const root = resolveApiaryRoot(env, home, platform);
 	let contents: string;
 	try {
 		contents = readFileSync(registryPath, "utf8");
@@ -271,6 +354,7 @@ export function readRegistryFile(registryPath: string, home: string = homedir())
 		if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
 		throw new RegistryError(
 			`could not read registry file at ${registryPath}: ${error instanceof Error ? error.message : "unknown"}`,
+			registryPath,
 		);
 	}
 
@@ -280,18 +364,34 @@ export function readRegistryFile(registryPath: string, home: string = homedir())
 	} catch (error) {
 		throw new RegistryError(
 			`registry file at ${registryPath} is not valid JSON: ${error instanceof Error ? error.message : "unknown"}`,
+			registryPath,
 		);
 	}
 
 	if (parsed === null || typeof parsed !== "object") {
-		throw new RegistryError(`registry file at ${registryPath} must be a JSON object with a "daemons" array`);
+		throw new RegistryError(
+			`registry file at ${registryPath} must be a JSON object with a "daemons" array`,
+			registryPath,
+		);
 	}
 	const daemons = (parsed as Record<string, unknown>).daemons;
 	if (!Array.isArray(daemons) || daemons.length === 0) {
-		throw new RegistryError(`registry file at ${registryPath} must have a non-empty "daemons" array`);
+		throw new RegistryError(
+			`registry file at ${registryPath} must have a non-empty "daemons" array`,
+			registryPath,
+		);
 	}
 
-	return daemons.map((entry, index) => parseEntry(entry, index, home));
+	try {
+		return daemons.map((entry, index) => parseEntry(entry, index, home, root));
+	} catch (error) {
+		// A per-entry failure (bad name / shape) is a malformed FILE: tag the error with the
+		// file it came from so a two-location caller can name the actually-broken file.
+		if (error instanceof RegistryError && error.registryPath === undefined) {
+			error.registryPath = registryPath;
+		}
+		throw error;
+	}
 }
 
 /**
@@ -305,4 +405,158 @@ export function loadRegistry(options: LoadRegistryOptions = {}): DaemonEntry[] {
 	const registryPath = options.registryPath ?? defaultRegistryPath(home);
 	const fromFile = readRegistryFile(registryPath, home);
 	return fromFile ?? [honeycombFallbackEntry(home)];
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// PRD-004b: the fleet-shared coordination surface (two-location resolution + migration)
+// ────────────────────────────────────────────────────────────────────────────
+
+/** Seams for the two-location registry resolution + one-time migration (PRD-004b). */
+export interface FleetRegistryOptions {
+	/** The home dir the fleet root + legacy root are anchored under (default real `~`). */
+	readonly home?: string;
+	/** The env the fleet-root chain reads (default `process.env`). */
+	readonly env?: NodeJS.ProcessEnv;
+	/** The platform the fleet-root chain reads (default `process.platform`). */
+	readonly platform?: NodeJS.Platform;
+}
+
+/** Filesystem seams for {@link migrateRegistry} (injected so failure paths are hermetic). */
+export interface RegistryMigrationSeams {
+	/** Does a path exist? Default: `existsSync`. */
+	readonly exists?: (path: string) => boolean;
+	/** Create a directory (recursive). Default: `mkdirSync(path, { recursive: true })`. */
+	readonly makeDir?: (path: string) => void;
+	/** Copy a file. Default: `copyFileSync`. Tests inject a throwing copy for the b-AC-8 path. */
+	readonly copyFile?: (src: string, dst: string) => void;
+	/** Rename a file. Default: `renameSync`. Tests inject a throwing rename to prove tolerance. */
+	readonly rename?: (src: string, dst: string) => void;
+}
+
+/** The outcome of {@link migrateRegistry} (resolved, never thrown). */
+export interface RegistryMigrationResult {
+	/** True iff the legacy content was copied to the new location this run. */
+	readonly migrated: boolean;
+	/** Why the migration did or did not run (audit trail; never a credential). */
+	readonly reason:
+		| "new-present" // the new file already exists: idempotent no-op (b-AC-2)
+		| "no-legacy" // no legacy file to migrate
+		| "legacy-malformed" // legacy present but unparseable: NOT migrated (left in place)
+		| "copy-failed" // the copy to the new location failed: legacy left authoritative (b-AC-8)
+		| "migrated"; // the copy succeeded (rename may or may not have)
+	/** True iff the legacy file was renamed to the `.migrated` marker (best-effort). */
+	readonly legacyRenamed?: boolean;
+}
+
+/**
+ * Resolve the supervised-daemon entries across BOTH the new and legacy registry locations
+ * (PRD-004b), read-only (no migration, no writes). New-first with a legacy-additive merge:
+ *
+ *   1. read `<root>/registry.json`,
+ *   2. read the legacy `~/.honeycomb/doctor.daemons.json`,
+ *   3. start from the new file's entries, then additively merge each legacy entry whose
+ *      `name` is not already present. On a `name` collision the new-location entry wins
+ *      wholesale (ADR-0003 registry compatibility window contract, confirmed 2026-07-04).
+ *
+ * Returns `null` only when NEITHER file exists (the caller applies the honeycomb-primary
+ * fallback). A present-but-malformed file at EITHER location throws {@link RegistryError}
+ * (the unchanged fail-loud posture). doctor never writes merged results back to the legacy
+ * file. Re-running this (a registry reload trigger, PRD-001 AC-7) re-reads both locations,
+ * so a mid-window write to either file is picked up (b-AC-4).
+ */
+export function resolveRegistryEntries(options: FleetRegistryOptions = {}): DaemonEntry[] | null {
+	const home = options.home ?? homedir();
+	const env = options.env ?? process.env;
+	const platform = options.platform ?? process.platform;
+	const newEntries = readRegistryFile(defaultRegistryPath(home, env, platform), home, env, platform);
+	// LEGACY-HONEYCOMB-WINDOW: the legacy-location read, removed when the window closes.
+	const legacyEntries = readRegistryFile(legacyRegistryPath(home), home, env, platform);
+
+	if (newEntries === null && legacyEntries === null) return null;
+
+	const merged: DaemonEntry[] = [...(newEntries ?? [])];
+	const seen = new Set(merged.map((entry) => entry.name));
+	for (const entry of legacyEntries ?? []) {
+		// New wins per name; a legacy-only entry is merged additively so a not-yet-updated
+		// installer's daemon is never silently unsupervised.
+		if (!seen.has(entry.name)) {
+			merged.push(entry);
+			seen.add(entry.name);
+		}
+	}
+	return merged;
+}
+
+/**
+ * The one-time, idempotent, additive registry migration (PRD-004b). When the new
+ * `<root>/registry.json` is absent and the legacy `~/.honeycomb/doctor.daemons.json` exists
+ * and parses, copy it to the new location, then rename the legacy file to
+ * `doctor.daemons.json.migrated` (kept, never deleted). Postures, all preserved:
+ *
+ *   - new file already present  -> no-op (idempotent, b-AC-2).
+ *   - no legacy file            -> nothing to do.
+ *   - legacy present but malformed -> NOT migrated (left untouched); resolution fails loud later.
+ *   - copy fails                -> legacy left untouched + authoritative via the fallback read (b-AC-8).
+ *   - rename fails after a good copy -> tolerated; the merge rule handles the still-present legacy.
+ *
+ * Best-effort and TOTAL: every fs operation is wrapped so the migration can never take the
+ * watchdog down (design principle 1). Returns a structured {@link RegistryMigrationResult}.
+ */
+export function migrateRegistry(
+	options: FleetRegistryOptions = {},
+	seams: RegistryMigrationSeams = {},
+): RegistryMigrationResult {
+	const home = options.home ?? homedir();
+	const env = options.env ?? process.env;
+	const platform = options.platform ?? process.platform;
+	const exists = seams.exists ?? existsSync;
+	const makeDir =
+		seams.makeDir ??
+		((path: string): void => {
+			mkdirSync(path, { recursive: true });
+		});
+	const copyFile = seams.copyFile ?? copyFileSync;
+	const rename = seams.rename ?? renameSync;
+	const newPath = defaultRegistryPath(home, env, platform);
+	const legacyPath = legacyRegistryPath(home);
+
+	// Idempotent: once the new file exists the migration has run (or been superseded); never
+	// re-copy or re-rename (b-AC-2).
+	try {
+		if (exists(newPath)) return { migrated: false, reason: "new-present" };
+	} catch {
+		// A failing existence probe must not wedge boot; fall through and let the copy guard decide.
+	}
+
+	// Validate the legacy file parses before touching anything. A malformed legacy file is
+	// NOT migrated (unchanged fail-loud-on-read posture); it is left in place.
+	let legacyEntries: DaemonEntry[] | null;
+	try {
+		legacyEntries = readRegistryFile(legacyPath, home, env, platform);
+	} catch {
+		return { migrated: false, reason: "legacy-malformed" };
+	}
+	if (legacyEntries === null) return { migrated: false, reason: "no-legacy" };
+
+	// Copy the legacy bytes verbatim to the new location (shape is unchanged). A copy failure
+	// leaves the legacy file untouched and authoritative via the fallback read (b-AC-8).
+	try {
+		makeDir(dirname(newPath));
+		copyFile(legacyPath, newPath);
+	} catch {
+		return { migrated: false, reason: "copy-failed" };
+	}
+
+	// Rename the legacy file to the `.migrated` marker so it is kept (never deleted) yet no
+	// longer parses as the live legacy registry. A rename failure is tolerated: the merge rule
+	// tolerates the still-present legacy file.
+	let legacyRenamed = false;
+	try {
+		rename(legacyPath, migratedLegacyRegistryPath(home));
+		legacyRenamed = true;
+	} catch {
+		// Tolerated: the merge rule handles the still-present legacy file.
+	}
+
+	return { migrated: true, reason: "migrated", legacyRenamed };
 }

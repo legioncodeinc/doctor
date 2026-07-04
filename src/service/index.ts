@@ -211,7 +211,8 @@ export function createServiceModule(deps: ServiceModuleDeps): ServiceModule {
 				try {
 					if (p.manager === "schtasks" && unitTarget === "") {
 						// Per-user task: stage the XML beside Doctor's workspace so schtasks /XML can read it.
-						unitTarget = `${p.home}/.honeycomb/doctor/doctor-task.xml`;
+						// ADR-0003 (PRD-004a): the workspace is `<root>/doctor` (was `~/.honeycomb/doctor`).
+						unitTarget = `${p.stateDir}/doctor-task.xml`;
 					}
 					fs.mkdirp(dirname(unitTarget));
 					fs.writeFile(unitTarget, renderUnit(p));
@@ -260,7 +261,7 @@ export function createServiceModule(deps: ServiceModuleDeps): ServiceModule {
 
 			// 2) Delete the unit file so it cannot resurrect on next boot (AC-064b.5). For schtasks the
 			//    staged XML lives beside the workspace; remove that too.
-			const stagedXml = p.manager === "schtasks" ? `${p.home}/.honeycomb/doctor/doctor-task.xml` : "";
+			const stagedXml = p.manager === "schtasks" ? `${p.stateDir}/doctor-task.xml` : "";
 			try {
 				if (p.unitPath !== "") fs.removeFile(p.unitPath);
 				if (stagedXml !== "") fs.removeFile(stagedXml);
