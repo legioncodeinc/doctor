@@ -78,7 +78,8 @@ function buildFixtureDb(path: string): void {
 }
 
 function buildDoctor(over: Partial<Parameters<typeof createDoctor>[0]> = {}) {
-	const config = { ...resolveConfig({}), workspaceDir: makeTmp() };
+	const workspaceDir = makeTmp();
+	const config = { ...resolveConfig({}), workspaceDir };
 	return createDoctor({
 		config,
 		env: {},
@@ -87,6 +88,10 @@ function buildDoctor(over: Partial<Parameters<typeof createDoctor>[0]> = {}) {
 		runner: fakeRunner(),
 		probe: async (): Promise<HealthClassification> => ({ kind: "ok" }),
 		statusPagePort: 0,
+		// Hermetic seams: never mint/read the real device.json or the real registry (an
+		// absent injected path applies the honeycomb-primary fallback, as on a clean machine).
+		deviceId: "test-device-id",
+		registryPath: join(workspaceDir, "registry-absent.json"),
 		...over,
 	});
 }
@@ -220,6 +225,8 @@ describe("createDoctor telemetry wiring (PRD-001/PRD-002)", () => {
 			probe: async (): Promise<HealthClassification> => ({ kind: "ok" }),
 			statusPagePort: 0,
 			registryPath,
+			// Hermetic: never mint/read the real device.json.
+			deviceId: "test-device-id",
 		});
 
 		const event = await doctor.telemetryPollLoop.tick();

@@ -65,6 +65,7 @@ describe("createDoctor multi-daemon (PRD-004a)", () => {
 	it("a-AC-1: spawns one independent supervisor per registry entry", () => {
 		const doctor = createDoctor({
 			config: { ...resolveConfig({}), workspaceDir: dir },
+			deviceId: "test-device-id", // hermetic: never mint/read the real device.json
 			daemons: [
 				entry("honeycomb", "http://127.0.0.1:3850/health"),
 				entry("hive", "http://127.0.0.1:3853/health"),
@@ -87,6 +88,7 @@ describe("createDoctor multi-daemon (PRD-004a)", () => {
 		const pidReads: string[] = [];
 		const doctor = createDoctor({
 			config: { ...resolveConfig({}), workspaceDir: dir },
+			deviceId: "test-device-id", // hermetic: never mint/read the real device.json
 			daemons: [entry("a", serverA.url), entry("b", serverB.url)],
 			logger: silentLogger,
 			clock: createFakeClock(),
@@ -138,6 +140,7 @@ describe("createDoctor multi-daemon (PRD-004a)", () => {
 		const restart = vi.fn(async () => true); // a successful restart engages the cooldown
 		const doctor = createDoctor({
 			config: { ...resolveConfig({}), workspaceDir: dir },
+			deviceId: "test-device-id", // hermetic: never mint/read the real device.json
 			daemons: [entry("a", serverA.url), entry("b", serverB.url)],
 			logger: silentLogger,
 			clock: createFakeClock(0), // time frozen at 0 -> every re-tick is inside the 5s cooldown
@@ -173,6 +176,7 @@ describe("createDoctor multi-daemon (PRD-004a)", () => {
 
 		const doctor = createDoctor({
 			config: { ...resolveConfig({}), workspaceDir: dir },
+			deviceId: "test-device-id", // hermetic: never mint/read the real device.json
 			daemons: [entry("honeycomb", serverA.url), entry("hive", serverB.url), entry("nectar", serverC.url)],
 			logger: silentLogger,
 			clock: createFakeClock(),
@@ -204,6 +208,7 @@ describe("createDoctor multi-daemon (PRD-004a)", () => {
 		const hostedEscalation = vi.fn(async () => undefined);
 		const doctor = createDoctor({
 			config: { ...resolveConfig({}), workspaceDir: dir },
+			deviceId: "test-device-id", // hermetic: never mint/read the real device.json
 			daemons: [entry("honeycomb", serverA.url), entry("nectar", serverB.url)],
 			logger: silentLogger,
 			clock: createFakeClock(),

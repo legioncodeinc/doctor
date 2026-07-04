@@ -14,7 +14,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { deviceFilePath, resolveDeviceId, type ResolveDeviceIdDeps } from "../src/device-id.js";
+import { deviceFilePath, legacyDeviceFilePath, resolveDeviceId, type ResolveDeviceIdDeps } from "../src/device-id.js";
 
 const HOME = "/home/test";
 const FIXED_ID = "11111111-2222-3333-4444-555555555555";
@@ -168,7 +168,83 @@ describe("resolveDeviceId (PRD-064d / PRD-033 convergence)", () => {
 		expect(id).toBe(FIXED_ID);
 	});
 
-	it("deviceFilePath resolves to ~/.honeycomb/device.json (same path as the daemon)", () => {
-		expect(deviceFilePath(HOME).replace(/\\/g, "/")).toBe(`${HOME}/.honeycomb/device.json`);
+	it("deviceFilePath resolves to <root>/device.json at the fleet root (ADR-0003 / PRD-004b)", () => {
+		// Inject an empty env so the fleet-root chain is deterministic (`<home>/.apiary`),
+		// independent of any APIARY_HOME/XDG on the host.
+		expect(deviceFilePath(HOME, {}, "linux").replace(/\\/g, "/")).toBe(`${HOME}/.apiary/device.json`);
+	});
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// PRD-004b b-AC-6: device.json relocated to the fleet root with a legacy fallback
+// ────────────────────────────────────────────────────────────────────────────
+
+describe("resolveDeviceId device.json relocation (PRD-004b b-AC-6)", () => {
+	const FLEET = { env: {}, platform: "linux" as const };
+	const newPath = deviceFilePath(HOME, {}, "linux");
+	const legacyPath = legacyDeviceFilePath(HOME);
+	const legacyRecord = JSON.stringify({ device_id: "legacy-uuid", label: "legacy-host", createdAt: "2025-06-01T00:00:00.000Z" });
+
+	it("b-AC-6: a valid legacy device.json with no new record returns the legacy id, best-effort copies it to the new location, and never deletes the legacy file", () => {
+		const rec = writeRecorder();
+		const readPaths: string[] = [];
+		const id = resolveDeviceId({
+			homeDir: HOME,
+			...FLEET,
+			readFile: (path: string): string => {
+				readPaths.push(path);
+				if (path === legacyPath) return legacyRecord;
+				// The NEW location is absent -> mint/fallback logic reads the legacy next.
+				throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+			},
+			...rec.deps,
+		});
+
+		expect(id).toBe("legacy-uuid");
+		// Read the new location FIRST, then the legacy location.
+		expect(readPaths).toEqual([newPath, legacyPath]);
+		// Best-effort COPY (not move) to the new location, in the daemon's exact shape.
+		expect(rec.writes).toHaveLength(1);
+		expect(rec.writes[0]?.path).toBe(newPath);
+		const written = JSON.parse(rec.writes[0]?.data ?? "{}") as Record<string, unknown>;
+		expect(written.device_id).toBe("legacy-uuid");
+		// The legacy file is never deleted (there is no delete seam; the copy leaves it in place
+		// for a not-yet-migrated honeycomb daemon that still reads it).
+	});
+
+	it("b-AC-6: a legacy record whose best-effort copy fails still returns the legacy id and never throws", () => {
+		const id = resolveDeviceId({
+			homeDir: HOME,
+			...FLEET,
+			readFile: (path: string): string => {
+				if (path === legacyPath) return legacyRecord;
+				throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+			},
+			makeDir: () => {
+				throw Object.assign(new Error("EACCES"), { code: "EACCES" });
+			},
+			writeFile: () => {
+				throw new Error("should not reach writeFile when makeDir threw");
+			},
+		});
+		expect(id).toBe("legacy-uuid");
+	});
+
+	it("b-AC-6: with neither a new nor a legacy record, a fresh id is minted and persisted to the NEW location", () => {
+		const rec = writeRecorder();
+		const id = resolveDeviceId({
+			homeDir: HOME,
+			...FLEET,
+			readFile: () => {
+				throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+			},
+			mintId: () => FIXED_ID,
+			clock: () => FIXED_DATE,
+			label: () => "fresh",
+			...rec.deps,
+		});
+		expect(id).toBe(FIXED_ID);
+		expect(rec.writes).toHaveLength(1);
+		expect(rec.writes[0]?.path).toBe(newPath);
 	});
 });

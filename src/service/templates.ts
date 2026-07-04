@@ -68,7 +68,7 @@ export function escapeXml(value: string): string {
 export function renderLaunchdPlist(plan: ServicePlan): string {
 	const node = escapeXml(process.execPath);
 	const exec = escapeXml(plan.execPath);
-	const home = escapeXml(plan.home);
+	const stateDir = escapeXml(plan.stateDir);
 	const label = escapeXml(plan.label);
 	return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -91,9 +91,9 @@ export function renderLaunchdPlist(plan: ServicePlan): string {
 	<key>ProcessType</key>
 	<string>Background</string>
 	<key>StandardOutPath</key>
-	<string>${home}/.honeycomb/doctor/launchd.out.log</string>
+	<string>${stateDir}/launchd.out.log</string>
 	<key>StandardErrorPath</key>
-	<string>${home}/.honeycomb/doctor/launchd.err.log</string>
+	<string>${stateDir}/launchd.err.log</string>
 </dict>
 </plist>
 `;

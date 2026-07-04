@@ -1,3 +1,16 @@
+/**
+ * `doctor run` lifecycle over the REAL production entry (`runCli(["run"])`).
+ *
+ * Hermetic home: `run` performs the boot-time Apiary migrations and builds the full
+ * composition root, both of which resolve defaults from `os.homedir()` (registry,
+ * device.json, the legacy `~/.honeycomb` fallbacks). The suite-wide guard (tests/setup.ts)
+ * swaps HOME/USERPROFILE to a per-file temp dir before this module loads, so the boot sees
+ * an EMPTY fake home: the migrations are clean no-ops, the registry falls back to the
+ * honeycomb primary at the env-injected health URL, and the minted device.json lands in the
+ * temp dir, never the real `~/.apiary`. The test passes identically on a machine where the
+ * product has really been used.
+ */
+
 import { createServer, type Server } from "node:http";
 import { once } from "node:events";
 import { mkdtempSync, rmSync } from "node:fs";

@@ -24,6 +24,8 @@
 
 import { homedir, userInfo } from "node:os";
 
+import { resolveApiaryRoot } from "../apiary-root.js";
+
 /** The OS families Doctor knows how to register a service on. */
 export type ServicePlatform = "darwin" | "linux" | "win32";
 
@@ -62,6 +64,13 @@ export interface ServiceEnvironment {
 	readonly platform: NodeJS.Platform;
 	/** The user's home directory (where user-scope units are written). */
 	readonly home: string;
+	/**
+	 * The resolved fleet root (ADR-0003 / PRD-004a), where doctor's own state lives at
+	 * `<apiaryRoot>/doctor`. Gathered at the impure edge via {@link resolveApiaryRoot} so
+	 * the staged unit artifacts (schtasks XML, launchd logs) land under the neutral root
+	 * instead of the legacy `~/.honeycomb/doctor`, while the templates stay pure.
+	 */
+	readonly apiaryRoot: string;
 	/** True iff the process can install a system-scoped unit (root on POSIX, admin on Windows). */
 	readonly privileged: boolean;
 	/** The absolute path to the `doctor` executable the unit will exec. */
@@ -92,6 +101,12 @@ export interface ServicePlan {
 	readonly execPath: string;
 	/** The home dir (units reference it for logs / working dir). */
 	readonly home: string;
+	/**
+	 * doctor's own state dir under the fleet root: `<apiaryRoot>/doctor` (ADR-0003 / PRD-004a).
+	 * The single place the doctor subdirectory is spelled for the staged schtasks XML and the
+	 * launchd log paths, so there is exactly one source of truth for the location.
+	 */
+	readonly stateDir: string;
 }
 
 /** Gather the real {@link ServiceEnvironment} at the edge (the one impure call site). */
@@ -99,6 +114,9 @@ export function resolveServiceContext(execPath: string, preferSystemScope = fals
 	return {
 		platform: process.platform,
 		home: homedir(),
+		// ADR-0003: resolve the fleet root once at the impure edge so the plan carries a
+		// concrete `<root>/doctor` state dir into the pure template/argv builders.
+		apiaryRoot: resolveApiaryRoot(),
 		privileged: isPrivileged(),
 		execPath,
 		preferSystemScope,
@@ -218,5 +236,9 @@ export function resolveServicePlan(env: ServiceEnvironment): ServicePlan {
 		label: SERVICE_LABEL,
 		execPath: env.execPath,
 		home: env.home,
+		// ADR-0003 (PRD-004a): doctor's staged unit artifacts live under `<root>/doctor`.
+		// Composed with a forward slash (matching the existing POSIX-slash unit-path style)
+		// so launchd/systemd log paths and the schtasks staged XML keep one spelling.
+		stateDir: `${env.apiaryRoot}/doctor`,
 	};
 }

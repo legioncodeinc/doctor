@@ -27,11 +27,19 @@
 
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
+import { join } from "node:path";
 
+import { legacyHoneycombRoot } from "../apiary-root.js";
 import { createBackoff } from "../backoff.js";
 import { resolveConfig, type DoctorConfig } from "../config.js";
 import { resolveDeviceId } from "../device-id.js";
-import { defaultRegistryPath, readRegistryFile, RegistryError, type DaemonEntry } from "../registry.js";
+import {
+	defaultRegistryPath,
+	readRegistryFile,
+	RegistryError,
+	resolveRegistryEntries,
+	type DaemonEntry,
+} from "../registry.js";
 import { probeHealth } from "../health-probe.js";
 import { createPollLoop, type PollLoop } from "../ingestion/poll-loop.js";
 import { handleSseRequest } from "../ingestion/sse.js";
@@ -253,41 +261,71 @@ interface ResolvedDaemons {
 	/** The daemons to supervise (always non-empty: the honeycomb primary is the floor). */
 	readonly daemons: DaemonEntry[];
 	/**
-	 * A plain-language reason when the registry file was PRESENT but malformed, so the caller can
+	 * A plain-language reason when a registry file was PRESENT but malformed, so the caller can
 	 * log it and record a needs-attention banner. `null` when the registry loaded cleanly or was
 	 * simply absent (the normal additive fallback).
 	 */
 	readonly registryProblem: string | null;
+	/**
+	 * The file that is ACTUALLY malformed when `registryProblem` is set (mid-window this may be
+	 * the legacy `~/.honeycomb/doctor.daemons.json` rather than the new `<root>/registry.json`).
+	 * `null` when the failing file could not be identified.
+	 */
+	readonly registryProblemPath: string | null;
 }
 
 /**
- * Resolve the supervised-daemon list (PRD-004a). Precedence:
+ * Resolve the supervised-daemon list (PRD-004a; relocated by PRD-004b). Precedence:
  *   1. an explicitly-injected `daemons` list (tests drive the multi-daemon path hermetically);
- *   2. the registry file at `~/.honeycomb/doctor.daemons.json` (one supervisor per entry);
- *   3. when that file is ABSENT, the single honeycomb primary entry derived from `config`
+ *   2. an explicitly-injected `registryPath` (a single file, read exactly as before);
+ *   3. the two-location fleet resolution (PRD-004b): `<root>/registry.json` first, then the
+ *      legacy `~/.honeycomb/doctor.daemons.json` merged additively (new wins per `name`);
+ *   4. when NEITHER file exists, the single honeycomb primary entry derived from `config`
  *      (a-AC-2 - the registry is additive; a missing file must not wedge the watchdog).
  *
  * A present-but-MALFORMED registry file must NOT throw (PRD-004d "Failure handling"): throwing
  * would exit `createDoctor` -> `runWatchdog` exits non-zero -> the OS service unit's restart
  * policy (launchd `KeepAlive` / systemd `Restart=always`) restarts doctor straight into the
  * same parse failure, i.e. a crash loop. Instead it falls back to the honeycomb primary at
- * defaults and returns a `registryProblem` the composition root surfaces (log + needs-attention).
+ * defaults and returns a `registryProblem` (with the offending file's path when known) the
+ * composition root surfaces (log + needs-attention).
  */
 function resolveDaemons(
 	options: CreateDoctorOptions,
 	config: DoctorConfig,
 	home: string,
 ): ResolvedDaemons {
-	if (options.daemons !== undefined) return { daemons: [...options.daemons], registryProblem: null };
+	if (options.daemons !== undefined) {
+		return { daemons: [...options.daemons], registryProblem: null, registryProblemPath: null };
+	}
 	try {
-		const fromFile = readRegistryFile(options.registryPath ?? defaultRegistryPath(home), home);
-		return { daemons: fromFile ?? [honeycombEntryFromConfig(config)], registryProblem: null };
+		// PRD-004b: when an explicit `registryPath` is injected (hermetic tests, an operator
+		// override) read that single file exactly as before, bypassing the two-location
+		// resolution. Otherwise resolve NEW-first with the legacy-additive merge across both
+		// the fleet root and the legacy `~/.honeycomb` location so a mid-window fleet is seen.
+		const env = options.env ?? process.env;
+		const fromFile =
+			options.registryPath !== undefined
+				? readRegistryFile(options.registryPath, home)
+				: resolveRegistryEntries({ home, env, platform: process.platform });
+		return {
+			daemons: fromFile ?? [honeycombEntryFromConfig(config)],
+			registryProblem: null,
+			registryProblemPath: null,
+		};
 	} catch (error) {
 		// Malformed / unreadable registry (RegistryError) or any other parse failure: fall back to
 		// the honeycomb primary and surface the reason rather than crash-looping the watchdog.
+		// RegistryError carries the path of the file that actually failed (mid-window that may be
+		// the legacy file), so the operator-facing banner names the right file.
 		const reason =
 			error instanceof RegistryError || error instanceof Error ? error.message : "unknown registry parse error";
-		return { daemons: [honeycombEntryFromConfig(config)], registryProblem: reason };
+		const problemPath = error instanceof RegistryError ? (error.registryPath ?? null) : null;
+		return {
+			daemons: [honeycombEntryFromConfig(config)],
+			registryProblem: reason,
+			registryProblemPath: problemPath,
+		};
 	}
 }
 
@@ -303,7 +341,12 @@ export interface CreateDoctorOptions {
 	 * When omitted, the registry file is read from disk, falling back to the honeycomb primary.
 	 */
 	readonly daemons?: readonly DaemonEntry[];
-	/** Override the registry file path read when `daemons` is omitted (default: `~/.honeycomb/doctor.daemons.json`). */
+	/**
+	 * Override the registry to ONE explicit file read when `daemons` is omitted. Default:
+	 * the PRD-004b two-location fleet resolution (`<root>/registry.json` first, legacy
+	 * `~/.honeycomb/doctor.daemons.json` merged additively). Setting this bypasses the
+	 * two-location merge entirely (hermetic tests, operator overrides).
+	 */
 	readonly registryPath?: string;
 	/** Home directory for the default registry path (default: `homedir()`). */
 	readonly home?: string;
@@ -439,24 +482,32 @@ export function createDoctor(options: CreateDoctorOptions = {}): Doctor {
 	const config = options.config ?? resolveConfig(env);
 	const logger = options.logger ?? createLogger({ level: options.logLevel ?? "info" });
 	const clock = options.clock ?? createRealClock();
-	// Resolve the SHARED per-install device id (PRD-033/064d): read ~/.honeycomb/device.json,
-	// or mint+persist one in the daemon's exact shape so both processes converge on one id.
+	// Resolve the SHARED per-install device id (PRD-033/064d, relocated by PRD-004b): read
+	// <root>/device.json (legacy ~/.honeycomb/device.json as the window fallback), or
+	// mint+persist one in the daemon's exact shape so both processes converge on one id.
 	// resolveDeviceId never throws; "unknown-device" is the absolute last-resort net only.
 	const deviceId = options.deviceId ?? safeResolveDeviceId();
 	const runner = options.runner ?? createExecFileRunner();
+
+	const home = options.home ?? homedir();
 
 	// Process-global incident/escalation log + install lock, bound to the workspace dir. Per-daemon
 	// remediation state + incident episodes live in per-entry shards built in the supervisor loop
 	// below (PRD-004a a-AC-4/5/6); this shared incident log backs the process-global
 	// needs-attention store (the 064g escalation surface, which stays process-level).
+	// LEGACY-HONEYCOMB-WINDOW: the lock also honors a live holder at the pre-migration
+	// workspace (`~/.honeycomb/doctor`) per the PRD-004a design; drop when the window closes.
 	const incidents = createIncidentLog({ workspaceDir: config.workspaceDir, logger });
-	const installLock = createInstallLock({ workspaceDir: config.workspaceDir, logger });
+	const installLock = createInstallLock({
+		workspaceDir: config.workspaceDir,
+		legacyWorkspaceDir: join(legacyHoneycombRoot(home), "doctor"),
+		logger,
+	});
 
 	// Resolve the supervised-daemon registry (PRD-004a a-AC-1/2): one supervisor per entry, or the
 	// honeycomb primary fallback when no registry file is present. The per-entry PID reader lets
 	// each restart rung read its OWN pidPath (a-AC-7).
-	const home = options.home ?? homedir();
-	const { daemons, registryProblem } = resolveDaemons(options, config, home);
+	const { daemons, registryProblem, registryProblemPath } = resolveDaemons(options, config, home);
 	const readDaemonPid = options.readDaemonPid ?? defaultReadDaemonPid;
 
 	// The needs-attention store (064g) - the dashboard read seam + incident append.
@@ -473,7 +524,10 @@ export function createDoctor(options: CreateDoctorOptions = {}): Doctor {
 	// manual intervention. Both seams are fail-soft and never throw, so surfacing the problem can
 	// itself never re-wedge boot.
 	if (registryProblem !== null) {
-		const registryPath = options.registryPath ?? defaultRegistryPath(home);
+		// Name the file that is ACTUALLY malformed (RegistryError carries it): mid-window that
+		// may be the legacy file rather than the new default, and misdirecting the operator to
+		// the wrong file would stall the fix.
+		const registryPath = registryProblemPath ?? options.registryPath ?? defaultRegistryPath(home);
 		logger.error("registry.malformed_fallback", { registryPath, reason: registryProblem });
 		needsAttention.record(
 			buildEscalationRecord({
@@ -663,8 +717,9 @@ export function createDoctor(options: CreateDoctorOptions = {}): Doctor {
 
 	// The lifecycle capture-event emitter for the additive `doctor_updated` event
 	// (deduped per to_version in doctor's own un-sharded state.json). distinct_id
-	// prefers the shared installer id (~/.honeycomb/install-id) with the device id as
-	// fallback. Gated (empty key / DO_NOT_TRACK / HONEYCOMB_TELEMETRY=0) + fail-soft, so
+	// prefers the shared installer id (<root>/install-id, legacy ~/.honeycomb/install-id
+	// as the window fallback) with the device id as fallback. Gated (empty key /
+	// DO_NOT_TRACK / HONEYCOMB_TELEMETRY=0) + fail-soft, so
 	// wiring it changes no opt-out behavior and can never destabilize the watchdog.
 	const lifecycle = createLifecycleTelemetry({
 		stateStore: createStateStore({ workspaceDir: config.workspaceDir, logger }),

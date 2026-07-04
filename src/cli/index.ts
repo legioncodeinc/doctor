@@ -16,14 +16,17 @@
 
 import { createInterface } from "node:readline/promises";
 import { homedir } from "node:os";
+import { join } from "node:path";
 
+import { runApiaryMigrations } from "../apiary-migration.js";
+import { legacyHoneycombRoot } from "../apiary-root.js";
 import { createDoctor } from "../compose/index.js";
 import { resolveConfig } from "../config.js";
 import { resolveDeviceId } from "../device-id.js";
 import { probeHealth } from "../health-probe.js";
 import { createInstallLock } from "../install-lock.js";
 import { createLogger } from "../logger.js";
-import { defaultRegistryPath, readRegistryFile, type DaemonEntry } from "../registry.js";
+import { resolveRegistryEntries, type DaemonEntry } from "../registry.js";
 import {
 	createRemediationLadder,
 	createReinstallRung,
@@ -89,8 +92,10 @@ export function buildCliContext(argv: readonly string[]): CliContext {
 	const colors = createColors();
 	const runner = createExecFileRunner();
 	const home = homedir();
+	// PRD-004b: read the registry NEW-first with the legacy-additive merge (read-only; the
+	// one-time migration runs from the long-running `run` boot, not this short-lived CLI).
 	const daemonEntries =
-		readRegistryFile(defaultRegistryPath(home), home) ??
+		resolveRegistryEntries({ home, env }) ??
 		([
 			{
 				name: "honeycomb",
@@ -124,10 +129,17 @@ export function buildCliContext(argv: readonly string[]): CliContext {
 				return { lastHealAt: s.lastHealAt, lastKnownHealth: s.lastKnownHealth };
 			},
 		}));
-	const installLock = createInstallLock({ workspaceDir: config.workspaceDir, logger });
+	// LEGACY-HONEYCOMB-WINDOW: the lock also honors a live holder at the pre-migration
+	// workspace (`~/.honeycomb/doctor`) per the PRD-004a design; drop when the window closes.
+	const installLock = createInstallLock({
+		workspaceDir: config.workspaceDir,
+		legacyWorkspaceDir: join(legacyHoneycombRoot(home), "doctor"),
+		logger,
+	});
 
-	// The SHARED per-install device id (PRD-033/064d): the daemon and Doctor read/mint the
-	// same ~/.honeycomb/device.json so every telemetry stream correlates to one install.
+	// The SHARED per-install device id (PRD-033/064d, relocated by PRD-004b): the daemon and
+	// Doctor read/mint the same <root>/device.json (legacy ~/.honeycomb/device.json as the
+	// window fallback) so every telemetry stream correlates to one install.
 	// resolveDeviceId never throws; the try/catch keeps "unknown-device" as the last-resort net.
 	let deviceId = "unknown-device";
 	try {
@@ -181,7 +193,8 @@ export function buildCliContext(argv: readonly string[]): CliContext {
 
 	// The lifecycle capture-event emitter (doctor_installed / _updated / _uninstalled):
 	// dedupe markers live in doctor's own un-sharded state.json; distinct_id prefers the
-	// shared installer id (~/.honeycomb/install-id) with the resolved device id as fallback.
+	// shared installer id (<root>/install-id, legacy ~/.honeycomb/install-id as the window
+	// fallback) with the resolved device id as fallback.
 	// Every method is gated (empty key / DO_NOT_TRACK / HONEYCOMB_TELEMETRY=0) + fail-soft.
 	const lifecycle = createLifecycleTelemetry({
 		stateStore: createStateStore({ workspaceDir: config.workspaceDir, logger }),
@@ -271,6 +284,13 @@ export function buildCliContext(argv: readonly string[]): CliContext {
  */
 async function runWatchdog(argv: readonly string[]): Promise<number> {
 	const cliNoAutoUpdate = hasFlag(parseArgs(argv), "no-auto-update");
+	// PRD-004 (ADR-0003): run the one-time, idempotent, best-effort state migrations on boot
+	// BEFORE assembling the watchdog: doctor's own workspace (004a) and the fleet-shared
+	// registry (004b) move from the legacy `~/.honeycomb` root to the neutral `~/.apiary` root.
+	// runApiaryMigrations is TOTAL (never throws), so a migration hiccup can never block boot;
+	// readers fall back to the legacy location until the new path exists. The workspace leg is
+	// skipped (and logged) when DOCTOR_WORKSPACE_DIR pins the workspace explicitly.
+	runApiaryMigrations({ logger: createLogger({ level: "info" }) });
 	const doctor = createDoctor({ cliNoAutoUpdate });
 	await doctor.start();
 	// Keep `run` alive even when optional referenced handles (notably the status page)

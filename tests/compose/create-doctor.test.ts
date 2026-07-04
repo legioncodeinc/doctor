@@ -12,8 +12,8 @@
  * update engine, in-process status-page port 0) so no real timer/network/npm/daemon runs.
  */
 
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -68,7 +68,8 @@ function fakeUpdateEngine(): { engine: UpdateEngine; runs: () => number } {
 
 /** Build a Doctor over fakes; status page on port 0 (OS-assigned). */
 function buildDoctor(over: Partial<Parameters<typeof createDoctor>[0]> = {}) {
-	const config = { ...resolveConfig({}), workspaceDir: makeTmp() };
+	const workspaceDir = makeTmp();
+	const config = { ...resolveConfig({}), workspaceDir };
 	return createDoctor({
 		config,
 		env: {},
@@ -77,6 +78,11 @@ function buildDoctor(over: Partial<Parameters<typeof createDoctor>[0]> = {}) {
 		runner: fakeRunner().runner,
 		probe: async (): Promise<HealthClassification> => ({ kind: "ok" }),
 		statusPagePort: 0,
+		// Hermetic seams: never mint/read the real device.json or the real registry. The
+		// injected registryPath points at an absent file in the temp workspace, so the
+		// honeycomb-primary fallback applies exactly as an empty machine would.
+		deviceId: "test-device-id",
+		registryPath: join(workspaceDir, "registry-absent.json"),
 		...over,
 	});
 }
@@ -202,6 +208,8 @@ describe("createDoctor (composition root)", () => {
 			probe: async (): Promise<HealthClassification> => ({ kind: "ok" }),
 			statusPagePort: 0,
 			registryPath,
+			// Hermetic: never mint/read the real device.json.
+			deviceId: "test-device-id",
 		});
 		return { doctor, workspaceDir };
 	}
@@ -229,6 +237,41 @@ describe("createDoctor (composition root)", () => {
 		expect(na.escalation.diagnosis).toContain(registryPath);
 
 		await doctor.stop();
+	});
+
+	it("a malformed LEGACY registry mid-window: the needs-attention diagnosis names the legacy file, not the new default", async () => {
+		// Two-location resolution (no injected registryPath): the fake per-file HOME (tests/setup.ts)
+		// carries only a malformed LEGACY file, so the failure comes from the legacy read and the
+		// operator-facing banner must point at THAT file (QA suggestion: name the actually-broken path).
+		const home = homedir();
+		const legacyPath = join(home, ".honeycomb", "doctor.daemons.json");
+		mkdirSync(join(home, ".honeycomb"), { recursive: true });
+		writeFileSync(legacyPath, "{ this is not valid json", "utf8");
+		try {
+			const workspaceDir = makeTmp();
+			const doctor = createDoctor({
+				config: { ...resolveConfig({}), workspaceDir },
+				env: {},
+				logger: silentLogger,
+				clock: fakeClock(),
+				runner: fakeRunner().runner,
+				probe: async (): Promise<HealthClassification> => ({ kind: "ok" }),
+				statusPagePort: 0,
+				deviceId: "test-device-id",
+			});
+
+			expect(doctor.supervisors).toHaveLength(1);
+			const na = JSON.parse(readFileSync(join(workspaceDir, "needs-attention.json"), "utf8")) as {
+				escalation: { diagnosis: string };
+			};
+			// The diagnosis header names the legacy file that is actually malformed.
+			expect(na.escalation.diagnosis).toContain(legacyPath);
+			expect(na.escalation.diagnosis).not.toContain(join(home, ".apiary", "registry.json"));
+
+			await doctor.stop();
+		} finally {
+			rmSync(join(home, ".honeycomb"), { recursive: true, force: true });
+		}
 	});
 
 	it("an ABSENT registry falls back silently (a-AC-2): honeycomb primary, no needs-attention record", async () => {

@@ -31,10 +31,11 @@
  * are representable: there is no free-form property input at all.
  *
  * ── distinct_id ──────────────────────────────────────────────────────────────
- * Prefer the shared installer id at `~/.honeycomb/install-id` (written by the
- * honeycomb install script, PRD-002c) so doctor's lifecycle correlates with
- * the operator's install funnel. When the file is absent/empty, fall back to
- * doctor's stable per-install device id (PRD-033 UUID).
+ * Prefer the shared installer id at `<root>/install-id` at the fleet root, falling back
+ * to the legacy `~/.honeycomb/install-id` during the migration window (ADR-0003 /
+ * PRD-004b; the writer is the installer), so doctor's lifecycle correlates with the
+ * operator's install funnel. When neither file has a value, fall back to doctor's
+ * stable per-install device id (PRD-033 UUID).
  *
  * Built-ins only: node:os, node:fs, node:path (zero runtime deps).
  */
@@ -43,7 +44,8 @@ import { readFileSync } from "node:fs";
 import { arch, platform } from "node:os";
 import { join } from "node:path";
 
-import { honeycombHomeDir, resolveDeviceId } from "../device-id.js";
+import { legacyHoneycombRoot, resolveApiaryRoot } from "../apiary-root.js";
+import { resolveDeviceId } from "../device-id.js";
 import type { StateStore } from "../state.js";
 import { DOCTOR_VERSION } from "../version.js";
 import {
@@ -137,17 +139,35 @@ export function buildCaptureProperties(input: {
 // ────────────────────────────────────────────────────────────────────────────
 
 /**
- * Where the honeycomb installer persists the shared install id:
- * `~/.honeycomb/install-id` (a bare UUID, written by install.sh / install.ps1).
+ * Where the shared install id lives: `<root>/install-id` at the fleet root (ADR-0003 /
+ * PRD-004b), a bare UUID written by install.sh / install.ps1. doctor is a READER only; the
+ * installer (superproject work) writes the new location. Env/platform are injectable so the
+ * fleet-root chain is hermetic in tests.
  */
-export function installIdFilePath(homeDir?: string): string {
-	return join(honeycombHomeDir(homeDir), "install-id");
+export function installIdFilePath(
+	homeDir?: string,
+	env: NodeJS.ProcessEnv = process.env,
+	platform: NodeJS.Platform = process.platform,
+): string {
+	return join(resolveApiaryRoot(env, homeDir, platform), "install-id");
+}
+
+/**
+ * LEGACY-HONEYCOMB-WINDOW: the legacy shared install-id location `~/.honeycomb/install-id`
+ * (PRD-004b). Read-side fallback only; removed when the window closes.
+ */
+export function legacyInstallIdFilePath(homeDir?: string): string {
+	return join(legacyHoneycombRoot(homeDir), "install-id");
 }
 
 /** Injectable seams for {@link resolveDistinctId}. All optional. */
 export interface DistinctIdDeps {
 	/** The home dir the install-id file is rooted under (default real `~`). */
 	readonly homeDir?: string;
+	/** The env the fleet-root chain reads (default `process.env`). Injected for hermetic tests. */
+	readonly env?: NodeJS.ProcessEnv;
+	/** The platform the fleet-root chain reads (default `process.platform`). */
+	readonly platform?: NodeJS.Platform;
 	/** Read seam (default `node:fs` readFileSync). Tests inject a fixture reader. */
 	readonly readFile?: (path: string) => string;
 	/** A pre-resolved device id fallback. Default: {@link resolveDeviceId} (never throws). */
@@ -155,23 +175,29 @@ export interface DistinctIdDeps {
 }
 
 /**
- * Resolve the capture `distinct_id`. Prefer the shared installer id at
- * `~/.honeycomb/install-id` when the file exists and is non-empty (this is what
- * correlates doctor's lifecycle with the operator install funnel); otherwise
- * fall back to doctor's stable per-install device id (PRD-033 UUID). NEVER
- * throws and ALWAYS returns a non-empty id.
+ * Resolve the capture `distinct_id`. Prefer the shared installer id: read `<root>/install-id`
+ * first, then (LEGACY-HONEYCOMB-WINDOW) the legacy `~/.honeycomb/install-id`, when present and
+ * non-empty -- this is what correlates doctor's lifecycle with the operator install funnel
+ * across the ADR-0003 move (PRD-004b b-AC-7). Otherwise fall back to doctor's stable
+ * per-install device id (PRD-033 UUID). NEVER throws and ALWAYS returns a non-empty id.
  */
 export function resolveDistinctId(deps: DistinctIdDeps = {}): string {
 	const readFile = deps.readFile ?? ((path: string): string => readFileSync(path, "utf-8"));
-	try {
-		const raw = readFile(installIdFilePath(deps.homeDir)).trim();
-		if (raw !== "") return raw;
-	} catch {
-		// Missing file / unreadable dir: fall through to the device id.
+	const env = deps.env ?? process.env;
+	const platform = deps.platform ?? process.platform;
+	// New location first, then the legacy location for the migration window.
+	const candidates = [installIdFilePath(deps.homeDir, env, platform), legacyInstallIdFilePath(deps.homeDir)];
+	for (const candidate of candidates) {
+		try {
+			const raw = readFile(candidate).trim();
+			if (raw !== "") return raw;
+		} catch {
+			// Missing file / unreadable dir: try the next candidate, then the device id.
+		}
 	}
 	if (deps.deviceId !== undefined && deps.deviceId !== "") return deps.deviceId;
 	try {
-		return resolveDeviceId(deps.homeDir !== undefined ? { homeDir: deps.homeDir } : {});
+		return resolveDeviceId(deps.homeDir !== undefined ? { homeDir: deps.homeDir, env, platform } : { env, platform });
 	} catch {
 		// resolveDeviceId is itself defensive; this is the absolute last-resort net.
 		return "unknown-device";
