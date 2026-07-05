@@ -26,7 +26,7 @@
  *   (e.g. realpath) is out of scope: the workspace IS the authority.
  */
 
-import { isAbsolute, normalize, resolve, sep } from "node:path";
+import { isAbsolute, normalize, parse, resolve, sep } from "node:path";
 
 /**
  * Thrown when a path segment would escape its base dir (separator / `..` in a
@@ -90,6 +90,39 @@ export function resolveInBase(baseDir: string, ...segments: string[]): string {
 		);
 	}
 	return candidate;
+}
+
+/**
+ * SECURITY GUARD for recursive-delete targets (PRD-003b/003c, parent AC-8 / c-AC-5
+ * defense in depth): is `target` a directory a destructive verb (`doctor purge`,
+ * `doctor uninstall`'s state-dir removal) must NEVER recursively delete, no matter what
+ * the env-driven fleet-root chain (`APIARY_HOME` / `XDG_STATE_HOME`) resolved to?
+ *
+ * The resolver (`resolveApiaryRoot`) already enforces absolute-only env values, but an
+ * absolute value can still name a catastrophic directory: the filesystem root (`/`,
+ * `C:\`), the home directory itself, or an ancestor of home - each of which would turn
+ * a fleet-root `rmSync(..., { recursive: true })` into a whole-disk or whole-home wipe.
+ * A legitimate fleet root is always a DEDICATED directory (`~/.apiary` or an
+ * operator-pinned dir), so refusing these three shapes never blocks a real install.
+ *
+ * Fail-closed: an unresolvable comparison refuses (returns true). Never throws.
+ */
+export function isForbiddenWipeTarget(target: string, home: string): boolean {
+	try {
+		const targetResolved = resolve(target);
+		const homeResolved = resolve(home);
+		// (a) A filesystem root: `parse(x).root === x` only for `/`, `C:\`, `\\server\share\`.
+		if (parse(targetResolved).root === targetResolved) return true;
+		// (b) The home directory itself.
+		if (targetResolved === homeResolved) return true;
+		// (c) An ancestor of home (deleting it would delete home). Trailing-separator
+		//     compare so `/home/us` is never treated as an ancestor of `/home/user`.
+		const targetWithSep = targetResolved.endsWith(sep) ? targetResolved : targetResolved + sep;
+		if (homeResolved.startsWith(targetWithSep)) return true;
+		return false;
+	} catch {
+		return true;
+	}
 }
 
 /**

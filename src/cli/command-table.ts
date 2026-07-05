@@ -27,6 +27,10 @@ export type CommandName =
 	| "self-update"
 	| "install-service"
 	| "uninstall-service"
+	| "start"
+	| "stop"
+	| "uninstall"
+	| "purge"
 	| "logs"
 	| "help";
 
@@ -54,6 +58,16 @@ export const COMMAND_MENU: readonly CommandMenuEntry[] = [
 	{ invocation: "self-update", summary: "Update Doctor's own package (the ONLY path that does)." },
 	{ invocation: "install-service", summary: "Register Doctor as an OS service (064b)." },
 	{ invocation: "uninstall-service", summary: "Unregister the Doctor OS service (064b)." },
+	{ invocation: "start", summary: "Start Doctor's own watchdog service (PRD-003b)." },
+	{ invocation: "stop", summary: "Stop Doctor's own watchdog service (PRD-003b)." },
+	{
+		invocation: "uninstall",
+		summary: "Remove Doctor's service, registry entry, and state dir (keeps the npm package; PRD-003b).",
+	},
+	{
+		invocation: "purge",
+		summary: "DESTRUCTIVE: wipe every Apiary service, package, and state dir on this machine, Doctor last (PRD-003c).",
+	},
 	{ invocation: "logs", summary: "Tail incident logs for all daemons, or one via --daemon <name>." },
 	{ invocation: "help", summary: "Show this banner and command menu." },
 ];

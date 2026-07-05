@@ -126,6 +126,53 @@ export function uninstallCommands(plan: ServicePlan, uid: number): readonly Serv
 }
 
 /**
+ * The argv to START (without registering) the service for this plan (PRD-003b b-AC-1).
+ * Assumes the unit is already registered (via {@link installCommands} / `install-service`);
+ * a caller invoking this against an unregistered unit gets the manager's own honest
+ * "not found" failure rather than doctor silently registering one.
+ */
+export function startCommands(plan: ServicePlan, uid: number): readonly ServiceCommand[] {
+	switch (plan.manager) {
+		case "launchd":
+			// `kickstart -k` (re)starts the job in its existing domain; harmless if already running.
+			return [{ command: "launchctl", args: ["kickstart", "-k", launchdServiceTarget(plan, uid)] }];
+		case "systemd": {
+			const scopeArgs = plan.scope === "user" ? ["--user"] : [];
+			return [{ command: "systemctl", args: [...scopeArgs, "start", SYSTEMD_UNIT_NAME] }];
+		}
+		case "schtasks":
+			return [{ command: "schtasks", args: ["/Run", "/TN", WINDOWS_TASK_NAME] }];
+		case "sc":
+			return [{ command: "sc", args: ["start", WINDOWS_TASK_NAME] }];
+	}
+}
+
+/**
+ * The argv to STOP (without deregistering) the service for this plan (PRD-003b b-AC-1).
+ * Unlike {@link uninstallCommands}, this never unloads the unit / deletes the task: the
+ * service manager's own restart-on-crash policy (`KeepAlive`/`Restart=always`/the
+ * Scheduled Task's own trigger) stays intact, so a later `start` (or a crash) brings it
+ * back without re-registering.
+ */
+export function stopCommands(plan: ServicePlan, uid: number): readonly ServiceCommand[] {
+	switch (plan.manager) {
+		case "launchd":
+			// `kill SIGTERM` stops the running instance WITHOUT bootout (the job stays loaded,
+			// so `KeepAlive` does not immediately race a restart the way a bare SIGKILL would,
+			// and a subsequent `start` (kickstart) brings it back without re-bootstrapping).
+			return [{ command: "launchctl", args: ["kill", "SIGTERM", launchdServiceTarget(plan, uid)] }];
+		case "systemd": {
+			const scopeArgs = plan.scope === "user" ? ["--user"] : [];
+			return [{ command: "systemctl", args: [...scopeArgs, "stop", SYSTEMD_UNIT_NAME] }];
+		}
+		case "schtasks":
+			return [{ command: "schtasks", args: ["/End", "/TN", WINDOWS_TASK_NAME] }];
+		case "sc":
+			return [{ command: "sc", args: ["stop", WINDOWS_TASK_NAME] }];
+	}
+}
+
+/**
  * The argv to deregister the PRE-decision-#32 unit names (`com.legioncode.hivedoctor` /
  * `hivedoctor.service` / `HiveDoctor`). Run best-effort at the start of every install so
  * a re-run migrates a legacy unit; when no legacy unit exists these commands fail

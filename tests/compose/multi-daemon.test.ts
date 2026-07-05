@@ -10,7 +10,7 @@
  * is exercised over the real probe path, not a shared mock. Built-ins + the shared test helpers.
  */
 
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -19,7 +19,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createDoctor } from "../../src/compose/index.js";
 import { resolveConfig } from "../../src/config.js";
 import { silentLogger } from "../../src/logger.js";
-import type { DaemonEntry } from "../../src/registry.js";
+import { deleteRegistryEntry, type DaemonEntry } from "../../src/registry.js";
 import { createFakeClock } from "../helpers/harness.js";
 import { okBody, startMockHealthServer, type MockHealthServer } from "../helpers/health-server.js";
 import type { StatusJson } from "../../src/status-page/server.js";
@@ -78,6 +78,48 @@ describe("createDoctor multi-daemon (PRD-004a)", () => {
 		expect(doctor.supervisors).toHaveLength(3);
 		// The primary (exposed `supervisor`) is the first entry's loop.
 		expect(doctor.supervisor).toBe(doctor.supervisors[0]);
+	});
+
+	it("b-AC-7: registry without an entry => no supervisor built for it (true by construction)", () => {
+		const registryPath = join(dir, "registry.json");
+		writeFileSync(
+			registryPath,
+			JSON.stringify({
+				daemons: [
+					{ name: "honeycomb", healthUrl: "http://127.0.0.1:3850/health" },
+					{ name: "hive", healthUrl: "http://127.0.0.1:3853/health" },
+				],
+			}),
+		);
+
+		const before = createDoctor({
+			config: { ...resolveConfig({}), workspaceDir: dir },
+			deviceId: "test-device-id",
+			registryPath,
+			logger: silentLogger,
+			clock: createFakeClock(),
+			statusPagePort: 0,
+		});
+		// Both registered entries get their own supervisor + ladder (PRD-004a a-AC-1).
+		expect(before.supervisors).toHaveLength(2);
+		expect(before.ladders).toHaveLength(2);
+
+		// Simulate `hive uninstall` deleting its OWN registry entry (PRD-003b b-AC-3's writer).
+		const { deleted } = deleteRegistryEntry("hive", { registryPath, home: dir, env: {}, platform: "linux" });
+		expect(deleted).toBe(true);
+
+		const after = createDoctor({
+			config: { ...resolveConfig({}), workspaceDir: dir },
+			deviceId: "test-device-id",
+			registryPath,
+			logger: silentLogger,
+			clock: createFakeClock(),
+			statusPagePort: 0,
+		});
+		// The removed entry is simply absent from what a fresh boot reads: no supervisor, no
+		// ladder is ever built for it - doctor never probes or remediates it again (b-AC-7).
+		expect(after.supervisors).toHaveLength(1);
+		expect(after.ladders).toHaveLength(1);
 	});
 
 	it("a-AC-4/5/6: per-daemon state + incident shards are isolated (A's failures never touch B)", async () => {

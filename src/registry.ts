@@ -35,7 +35,8 @@
  * Built-ins only: node:fs + node:os + node:path.
  */
 
-import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync } from "node:fs";
+import { randomBytes } from "node:crypto";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 
@@ -559,4 +560,109 @@ export function migrateRegistry(
 	}
 
 	return { migrated: true, reason: "migrated", legacyRenamed };
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// PRD-003b: the generic per-product registry DELETE writer (b-AC-3)
+// ────────────────────────────────────────────────────────────────────────────
+
+/** Options for {@link deleteRegistryEntry}. */
+export interface DeleteRegistryEntryOptions {
+	/** Override the registry file path (default: {@link defaultRegistryPath}). */
+	readonly registryPath?: string;
+	/** Override the home directory used for the default path (default: `homedir()`). */
+	readonly home?: string;
+	/** Override the env the fleet-root chain reads (default `process.env`). */
+	readonly env?: NodeJS.ProcessEnv;
+	/** Override the platform the fleet-root chain reads (default `process.platform`). */
+	readonly platform?: NodeJS.Platform;
+}
+
+/** The outcome of {@link deleteRegistryEntry} (resolved, never thrown). */
+export interface DeleteRegistryEntryResult {
+	/** True iff an entry with the given `name` was present and removed this call. */
+	readonly deleted: boolean;
+}
+
+/**
+ * Delete ONE named entry from the fleet-shared registry (PRD-003b b-AC-2/b-AC-3/b-AC-7):
+ * every product's `uninstall` calls this with its own name so doctor's probe loop (which
+ * reads the registry fresh at boot via {@link resolveRegistryEntries}/{@link loadRegistry})
+ * stops supervising a removed product by construction - there is no separate "stop
+ * watching" step, the registry IS what the probe loop reads.
+ *
+ * Generic by design (not doctor-name-specific): doctor's OWN registry today typically has
+ * no entry (its supervised-daemon list is honeycomb/hive/nectar), but `doctor uninstall`
+ * calls this with `"doctor"` too so the contract is uniform and correct if one is ever
+ * present - a missing entry is simply a no-op (`deleted: false`), never an error.
+ *
+ * The write is ATOMIC (temp file + rename, mirroring {@link file://./state.js}'s pattern)
+ * and preserves every OTHER entry AND every unrecognized top-level key on the registry
+ * object verbatim (b-AC-3 "leaving other entries intact") - this function only ever
+ * removes the ONE matching array element from `daemons`, nothing else in the file.
+ *
+ * Fail-soft (never throws, mirrors every other write path in this module): an absent
+ * file, unparseable JSON, an unexpected shape, or a failed write all resolve to
+ * `{ deleted: false }` rather than propagating - `uninstall` must never crash on a
+ * registry that is missing or already broken.
+ */
+export function deleteRegistryEntry(
+	name: string,
+	options: DeleteRegistryEntryOptions = {},
+): DeleteRegistryEntryResult {
+	const home = options.home ?? homedir();
+	const env = options.env ?? process.env;
+	const platform = options.platform ?? process.platform;
+	const registryPath = options.registryPath ?? defaultRegistryPath(home, env, platform);
+
+	let raw: string;
+	try {
+		raw = readFileSync(registryPath, "utf8");
+	} catch {
+		// No registry file at all: nothing to delete (b-AC-6-adjacent no-op posture).
+		return { deleted: false };
+	}
+
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(raw);
+	} catch {
+		// A malformed file is doctor's own boot-time concern (surfaced loudly there); an
+		// uninstall must not attempt to "fix" it by overwriting unknown, possibly-important
+		// content. Report nothing deleted rather than destroying/misdiagnosing the file.
+		return { deleted: false };
+	}
+	if (parsed === null || typeof parsed !== "object") return { deleted: false };
+	const obj = parsed as Record<string, unknown>;
+	if (!Array.isArray(obj.daemons)) return { deleted: false };
+
+	const daemons = obj.daemons as unknown[];
+	const isMatch = (entry: unknown): boolean =>
+		entry !== null && typeof entry === "object" && (entry as Record<string, unknown>).name === name;
+	if (!daemons.some(isMatch)) return { deleted: false };
+	const filtered = daemons.filter((entry) => !isMatch(entry));
+
+	// Preserve every OTHER top-level key verbatim (b-AC-3): only the `daemons` array changes.
+	const updated: Record<string, unknown> = { ...obj, daemons: filtered };
+
+	let tmpPath: string | null = null;
+	try {
+		const dir = dirname(registryPath);
+		mkdirSync(dir, { recursive: true });
+		tmpPath = `${registryPath}.${randomBytes(6).toString("hex")}.tmp`;
+		writeFileSync(tmpPath, `${JSON.stringify(updated, null, 2)}\n`, "utf8");
+		renameSync(tmpPath, registryPath);
+	} catch {
+		// Best-effort cleanup of the temp file; a failed write means the entry was NOT
+		// removed - report honestly rather than claiming success.
+		if (tmpPath !== null) {
+			try {
+				rmSync(tmpPath, { force: true });
+			} catch {
+				// Temp cleanup is itself best-effort; a leftover .tmp is harmless and rare.
+			}
+		}
+		return { deleted: false };
+	}
+	return { deleted: true };
 }

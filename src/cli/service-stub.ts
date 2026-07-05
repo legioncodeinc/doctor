@@ -34,6 +34,19 @@ export interface ServiceModule {
 	uninstall(): Promise<ServiceResult>;
 }
 
+/**
+ * The `start` / `stop` lifecycle seam (PRD-003b b-AC-1). Declared SEPARATELY from
+ * {@link ServiceModule} (rather than adding methods to it) so every existing fixture that
+ * implements `{ install, uninstall }` for `ServiceModule` keeps compiling unchanged - the
+ * two seams are optional and independent on {@link file://./context.js}'s `CliDeps`.
+ */
+export interface ServiceLifecycleModule {
+	/** Start Doctor's own daemon (via the registered OS service when one exists). */
+	start(): Promise<ServiceResult>;
+	/** Stop Doctor's own daemon (via the registered OS service). */
+	stop(): Promise<ServiceResult>;
+}
+
 /** The honest message printed when 064b is not yet wired in. */
 export const SERVICE_NOT_AVAILABLE =
 	"Service registration is not yet available (PRD-064b). " +

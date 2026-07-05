@@ -19,7 +19,7 @@ import type { ReadInstalledVersionFn } from "../update/update-engine.js";
 import type { HealthClassification } from "../health-probe.js";
 import type { LadderDecision, RemediationLadder, RungContext } from "../remediation.js";
 import type { LifecycleTelemetry } from "../telemetry/capture.js";
-import type { ServiceModule } from "./service-stub.js";
+import type { ServiceLifecycleModule, ServiceModule, ServiceResult } from "./service-stub.js";
 import type { ResolvedOptOut } from "./opt-out.js";
 
 /** A captured line of output (text + which stream it went to). */
@@ -38,6 +38,16 @@ export interface OutputSink {
 
 /** The confirm prompt seam (gated/destructive commands). Resolves true to proceed. */
 export type ConfirmFn = (question: string) => Promise<boolean>;
+
+/**
+ * The TYPED-TOKEN confirm seam (PRD-003c c-AC-1): resolves true ONLY when the operator's
+ * input exactly matches `expectedToken` (a y/N reflex is too easy to blow through for a
+ * credential-destroying action, per the orchestrator's confirmation-strength ruling).
+ * Declared separately from {@link ConfirmFn} so `purge`'s stronger gate never weakens (or
+ * is weakened by) every other command's existing y/N `confirm` seam - `realConfirm` in
+ * cli/index.ts stays completely untouched.
+ */
+export type ConfirmTokenFn = (question: string, expectedToken: string) => Promise<boolean>;
 
 /** How the auto-update poll loop / engine bits are exposed to the CLI `update`/`self-update`. */
 export interface UpdateActions {
@@ -80,6 +90,51 @@ export interface StatusDaemonSource {
 
 /** Coarse Doctor service state for `status` (064b owns the real registration). */
 export type ServiceState = "running" | "not-running" | "unknown";
+
+/**
+ * The deps `uninstall` (PRD-003b b-AC-2/3/4/6) needs beyond {@link ServiceModule}: a
+ * read-only pre-check (b-AC-6's "nothing to remove" friendly no-op) and the actual
+ * registry-entry + state-dir removal. Kept separate from `serviceModule` (which stays the
+ * unchanged install/uninstall-service seam) so `uninstall-service` keeps its exact
+ * pre-existing behavior while the new `uninstall` verb does the fuller three-part job.
+ */
+export interface ProductUninstallDeps {
+	/** Does doctor currently have a registry entry, or a state dir? (b-AC-6 pre-check). */
+	readonly precheck: () => { registryEntryExists: boolean; stateDirExists: boolean };
+	/** The bounded async service-manager status probe (reused from `serviceStateAsync`'s wiring). */
+	readonly serviceStatusAsync: () => Promise<ServiceState>;
+	/**
+	 * Is the service actually REGISTERED (unit-file present / a query succeeds), regardless
+	 * of activity? A "not-running" {@link serviceStatusAsync} result alone cannot tell an
+	 * installed-but-inactive unit apart from a genuinely absent one on every platform (most
+	 * notably systemd, where `is-active` fails identically for both) - this is the stronger
+	 * signal the b-AC-6 pre-check requires so it never wrongly claims a no-op. See
+	 * `service/index.ts`'s `isServiceRegistered`, which this is wired to in production.
+	 */
+	readonly isServiceRegistered: () => Promise<boolean>;
+	/** Stop + deregister + remove the unit file (delegates to `serviceModule.uninstall()`). */
+	readonly serviceUninstall: () => Promise<ServiceResult>;
+	/** Delete the registry entry (if any) and remove the state dir (if any). */
+	readonly removeState: () => { registryEntryRemoved: boolean; stateDirRemoved: boolean };
+}
+
+/** One line of {@link PurgeReport} describing what happened to one purge target. */
+export interface PurgeReport {
+	/** True iff every step that found something to remove also succeeded at removing it. */
+	readonly ok: boolean;
+	/** True iff NOTHING was found anywhere (c-AC-6): every category was already clean. */
+	readonly nothingToRemove: boolean;
+	/** Human-readable step-by-step lines, in execution order, ready to print verbatim. */
+	readonly lines: readonly string[];
+}
+
+/** The deps `purge` (PRD-003c) needs: the pre-confirmation summary and the actual wipe. */
+export interface PurgeDeps {
+	/** The lines describing exactly what WILL be destroyed (c-AC-1's pre-confirmation summary). */
+	readonly summaryLines: () => readonly string[];
+	/** Run the full purge (c-AC-2 .. c-AC-6). Never throws; failures are reported in the result. */
+	readonly run: () => Promise<PurgeReport>;
+}
 
 /** The injected dependencies every command shares. */
 export interface CliDeps {
@@ -127,6 +182,22 @@ export interface CliDeps {
 	 */
 	readonly serviceModule?: ServiceModule;
 	/**
+	 * The `start`/`stop` lifecycle seam (PRD-003b b-AC-1), when wired in. When absent, `start`
+	 * and `stop` print the same "not yet available" stub message `install-service` does.
+	 */
+	readonly serviceLifecycle?: ServiceLifecycleModule;
+	/**
+	 * The full three-part `uninstall` seam (PRD-003b b-AC-2/3/4/6), when wired in. When
+	 * absent, `uninstall` prints the "not yet available" stub message. `uninstall-service`
+	 * is UNCHANGED and does not use this - it stays on `serviceModule.uninstall()` alone.
+	 */
+	readonly productUninstall?: ProductUninstallDeps;
+	/**
+	 * The destructive full-machine `purge` seam (PRD-003c), when wired in. When absent,
+	 * `purge` prints the "not yet available" stub message rather than pretending to wipe.
+	 */
+	readonly purge?: PurgeDeps;
+	/**
 	 * The lifecycle capture-event emitter (PostHog `doctor_installed` /
 	 * `doctor_uninstalled`), when wired in. Every method is gated + fail-soft and never
 	 * throws; the dispatcher fires it around the service verbs. Optional so the test harness
@@ -141,6 +212,18 @@ export interface CliContext {
 	readonly io: OutputSink;
 	/** Confirm prompt (gated commands). */
 	readonly confirm: ConfirmFn;
+	/**
+	 * The stronger typed-token confirm prompt `purge` uses (PRD-003c c-AC-1). Optional so
+	 * every existing harness/fixture that only sets `confirm` keeps compiling; `runPurge`
+	 * treats an absent seam as "cannot confirm" (declines) rather than throwing.
+	 */
+	readonly confirmToken?: ConfirmTokenFn;
+	/**
+	 * Whether stdin is an interactive TTY right now (PRD-003c c-AC-1: a non-TTY stdin
+	 * without `--yes` must refuse with instructions, never hang, never proceed). Optional;
+	 * `runPurge` treats an absent seam as non-interactive (the safer default).
+	 */
+	readonly isInteractive?: () => boolean;
 	/** Styling surface. */
 	readonly colors: Colors;
 	/** Injected dependencies. */

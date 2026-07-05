@@ -24,7 +24,7 @@ import { parseArgs, hasFlag, type ParsedArgs } from "./arg-parse.js";
 import { renderBannerWithMenu } from "./banner.js";
 import { resolveCommand, type CommandName } from "./command-table.js";
 import { DOCTOR_VERSION } from "../version.js";
-import type { CliContext } from "./context.js";
+import type { CliContext, ServiceState } from "./context.js";
 import { SERVICE_NOT_AVAILABLE } from "./service-stub.js";
 import type { HealthClassification } from "../health-probe.js";
 
@@ -243,6 +243,126 @@ async function runService(ctx: CliContext, kind: "install" | "uninstall"): Promi
 	return result.ok ? EXIT_OK : EXIT_ERROR;
 }
 
+/** `start` / `stop` (PRD-003b b-AC-1): front doctor's OWN OS service, when 003b is wired. */
+async function runStartStop(ctx: CliContext, kind: "start" | "stop"): Promise<number> {
+	const { io, deps } = ctx;
+	if (deps.serviceLifecycle === undefined) {
+		io.out(SERVICE_NOT_AVAILABLE);
+		return EXIT_OK;
+	}
+	const result = kind === "start" ? await deps.serviceLifecycle.start() : await deps.serviceLifecycle.stop();
+	io.out(result.message);
+	return result.ok ? EXIT_OK : EXIT_ERROR;
+}
+
+/**
+ * `uninstall` (PRD-003b b-AC-2/3/4/6): remove doctor's OWN service unit, doctor's OWN
+ * fleet-registry entry, and doctor's OWN state dir. It never touches the npm package
+ * (that is `purge`'s job) or anything belonging to another product. Distinct from the
+ * legacy `uninstall-service` verb (which stays exactly as it was: service-unit-only).
+ */
+async function runUninstall(ctx: CliContext): Promise<number> {
+	const { io, colors, deps } = ctx;
+	if (deps.productUninstall === undefined) {
+		io.out(SERVICE_NOT_AVAILABLE);
+		return EXIT_OK;
+	}
+	const u = deps.productUninstall;
+
+	// b-AC-6: a "nothing installed" machine exits 0 with a friendly no-op message, and
+	// touches NOTHING (no lifecycle event, no service call) - the pre-check is read-only.
+	//
+	// The "service present" signal is REGISTRATION evidence, never merely activity: an
+	// installed-but-inactive unit (e.g. a stopped systemd unit, where `systemctl is-active`
+	// fails identically for "inactive" and "never registered") must still count as present,
+	// so uninstall runs and actually deregisters it - never a false no-op. `isServiceRegistered`
+	// probe errors/ambiguity bias toward "present" (proceed with uninstall) rather than a
+	// false no-op, since every uninstall step below is individually idempotent/best-effort.
+	const pre = u.precheck();
+	let serviceStatus: ServiceState = "unknown";
+	try {
+		serviceStatus = await u.serviceStatusAsync();
+	} catch {
+		serviceStatus = "unknown";
+	}
+	let isRegistered = true;
+	try {
+		isRegistered = await u.isServiceRegistered();
+	} catch {
+		isRegistered = true;
+	}
+	const servicePresent = serviceStatus === "running" || isRegistered;
+	if (!servicePresent && !pre.registryEntryExists && !pre.stateDirExists) {
+		io.out(colors.dim("Nothing to remove: no Doctor service, registry entry, or state dir was found."));
+		return EXIT_OK;
+	}
+
+	// Fire-and-forget BEFORE teardown, matching the existing uninstall-service ordering
+	// (dispatch's runService): the emitter never throws/rejects and never delays teardown.
+	if (deps.lifecycle !== undefined) void deps.lifecycle.uninstalled();
+
+	const serviceResult = await u.serviceUninstall();
+	io.out(serviceResult.message);
+
+	const { registryEntryRemoved, stateDirRemoved } = u.removeState();
+	io.out(
+		registryEntryRemoved
+			? "Removed Doctor's entry from the fleet registry."
+			: "No fleet-registry entry for Doctor was found.",
+	);
+	io.out(stateDirRemoved ? "Removed Doctor's state directory." : "No Doctor state directory was found.");
+
+	// Exit-code honesty (b-AC-6 / parent AC-9, mirroring nectar's and hive's already-absent
+	// classification): when the probe above CONFIDENTLY reported the service unregistered
+	// (and not running), the uninstall only proceeded because a registry entry or state dir
+	// remained - the manager's deregister failure is then the expected "was already gone"
+	// shape, not a real failure, and must not flip a successful cleanup to exit 1. A genuine
+	// deregister failure on a REGISTERED (or running/ambiguous) unit still exits non-zero.
+	return serviceResult.ok || !servicePresent ? EXIT_OK : EXIT_ERROR;
+}
+
+/**
+ * `purge` (PRD-003c): the destructive, confirmation-gated full-machine wipe. Requires
+ * typing the literal word "purge" (orchestrator decision: typed-token, not y/N) unless
+ * `--yes` was passed; a non-interactive stdin WITHOUT `--yes` refuses with instructions
+ * rather than hanging or defaulting to a silent no (c-AC-1).
+ */
+async function runPurge(ctx: CliContext, parsed: ParsedArgs): Promise<number> {
+	const { io, colors, deps } = ctx;
+	if (deps.purge === undefined) {
+		io.out(SERVICE_NOT_AVAILABLE);
+		return EXIT_OK;
+	}
+	const p = deps.purge;
+	const autoYes = hasFlag(parsed, "yes");
+
+	if (!autoYes) {
+		io.out(colors.bold("`doctor purge` will PERMANENTLY remove:"));
+		for (const line of p.summaryLines()) io.out(`  - ${line}`);
+		io.out("");
+
+		const interactive = ctx.isInteractive?.() ?? false;
+		if (!interactive) {
+			io.out(colors.red("Refusing to purge non-interactively without --yes."));
+			io.out(colors.dim("Re-run as `doctor purge --yes`, or run this in an interactive terminal."));
+			return EXIT_DECLINED;
+		}
+
+		const confirmToken = ctx.confirmToken;
+		const confirmed =
+			confirmToken !== undefined &&
+			(await confirmToken('This action cannot be undone. Type "purge" to confirm, or anything else to abort.', "purge"));
+		if (!confirmed) {
+			io.out(colors.dim("Aborted; no changes were made."));
+			return EXIT_DECLINED;
+		}
+	}
+
+	const report = await p.run();
+	for (const line of report.lines) io.out(line);
+	return report.ok ? EXIT_OK : EXIT_ERROR;
+}
+
 /** `logs`: tail the local incident log. */
 async function runLogs(ctx: CliContext, parsed: ParsedArgs): Promise<number> {
 	const { io, colors, deps } = ctx;
@@ -303,6 +423,14 @@ async function route(command: CommandName, ctx: CliContext, parsed: ParsedArgs):
 			return runService(ctx, "install");
 		case "uninstall-service":
 			return runService(ctx, "uninstall");
+		case "start":
+			return runStartStop(ctx, "start");
+		case "stop":
+			return runStartStop(ctx, "stop");
+		case "uninstall":
+			return runUninstall(ctx);
+		case "purge":
+			return runPurge(ctx, parsed);
 		case "logs":
 			return runLogs(ctx, parsed);
 		case "help":

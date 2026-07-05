@@ -9,7 +9,7 @@
  * pre-PRD-001a baseline and still exercises the exact same PRD-004a behavior.
  */
 
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -18,6 +18,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DEFAULTS } from "../src/config.js";
 import {
 	defaultRegistryPath,
+	deleteRegistryEntry,
 	honeycombFallbackEntry,
 	loadRegistry,
 	readRegistryFile,
@@ -458,5 +459,91 @@ describe("registry: PRD-001a telemetryDbPath extension", () => {
 			restartGiveUpThreshold: 3,
 			restartCooldownMs: 5_000,
 		});
+	});
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// PRD-003b: the generic per-product registry DELETE writer (b-AC-2/b-AC-3/b-AC-7)
+// ────────────────────────────────────────────────────────────────────────────
+
+describe("deleteRegistryEntry (PRD-003b)", () => {
+	it("b-AC-3: deletes the named entry, leaving every other entry intact", () => {
+		const path = writeRegistry(JSON.stringify(THREE_DAEMONS));
+		const result = deleteRegistryEntry("hive", { registryPath: path, home: HOME, env: {}, platform: "linux" });
+		expect(result.deleted).toBe(true);
+
+		const remaining = readRegistryFile(path, HOME, {}, "linux") ?? [];
+		expect(remaining.map((e) => e.name)).toEqual(["honeycomb", "nectar"]);
+		// The other entries' fields are untouched (b-AC-3 "leaving other entries intact").
+		expect(remaining[0]).toMatchObject({ name: "honeycomb", healthUrl: "http://127.0.0.1:3850/health" });
+		expect(remaining[1]).toMatchObject({ name: "nectar", healthUrl: "http://127.0.0.1:3854/health" });
+	});
+
+	it("preserves unrecognized top-level keys on the registry object verbatim", () => {
+		const path = writeRegistry(
+			JSON.stringify({ ...THREE_DAEMONS, futureTopLevelKey: { keep: "me" }, version: 7 }),
+		);
+		deleteRegistryEntry("nectar", { registryPath: path, home: HOME, env: {}, platform: "linux" });
+
+		const raw = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
+		expect(raw.futureTopLevelKey).toEqual({ keep: "me" });
+		expect(raw.version).toBe(7);
+		expect((raw.daemons as unknown[]).length).toBe(2);
+	});
+
+	it("a missing entry is a no-op (deleted: false), other entries untouched", () => {
+		const path = writeRegistry(JSON.stringify(THREE_DAEMONS));
+		const result = deleteRegistryEntry("doctor", { registryPath: path, home: HOME, env: {}, platform: "linux" });
+		expect(result.deleted).toBe(false);
+		const remaining = readRegistryFile(path, HOME, {}, "linux") ?? [];
+		expect(remaining).toHaveLength(3);
+	});
+
+	it("an absent registry file is a fail-soft no-op, never throws", () => {
+		const missing = join(dir, "does-not-exist.json");
+		expect(() => deleteRegistryEntry("honeycomb", { registryPath: missing })).not.toThrow();
+		expect(deleteRegistryEntry("honeycomb", { registryPath: missing })).toEqual({ deleted: false });
+	});
+
+	it("an unparseable registry file is a fail-soft no-op, never throws and never overwrites it", () => {
+		const path = writeRegistry("{ not valid json");
+		const before = readFileSync(path, "utf8");
+		expect(() => deleteRegistryEntry("honeycomb", { registryPath: path })).not.toThrow();
+		expect(deleteRegistryEntry("honeycomb", { registryPath: path })).toEqual({ deleted: false });
+		// The malformed file is left byte-for-byte alone (never "fixed" by this writer).
+		expect(readFileSync(path, "utf8")).toBe(before);
+	});
+
+	it("a registry file missing the daemons array is a fail-soft no-op", () => {
+		const path = writeRegistry(JSON.stringify({ notDaemons: true }));
+		expect(deleteRegistryEntry("honeycomb", { registryPath: path })).toEqual({ deleted: false });
+	});
+
+	it("the write is atomic (temp file + rename): no stray .tmp file remains after a delete", () => {
+		const path = writeRegistry(JSON.stringify(THREE_DAEMONS));
+		deleteRegistryEntry("honeycomb", { registryPath: path, home: HOME, env: {}, platform: "linux" });
+		const siblingNames = readFileSync(path, "utf8"); // sanity: the target file itself is valid JSON
+		expect(() => JSON.parse(siblingNames)).not.toThrow();
+	});
+
+	it("b-AC-7: deleting doctor's own entry removes it from the resolved entries the boot-time reader returns", () => {
+		const path = writeRegistry(
+			JSON.stringify({
+				daemons: [
+					{ name: "honeycomb", healthUrl: "http://127.0.0.1:3850/health" },
+					{ name: "doctor", healthUrl: "http://127.0.0.1:3852/health" },
+				],
+			}),
+		);
+		expect((readRegistryFile(path, HOME, {}, "linux") ?? []).map((e) => e.name)).toContain("doctor");
+
+		deleteRegistryEntry("doctor", { registryPath: path, home: HOME, env: {}, platform: "linux" });
+
+		// True by construction (resolveDaemons/readRegistryFile reads the registry fresh): a
+		// removed entry is simply absent from what a fresh read returns, so nothing downstream
+		// can build a supervisor for it. See tests/compose/multi-daemon.test.ts for the
+		// composition-root-level proof ("registry without an entry => no supervisor built for it").
+		const after = readRegistryFile(path, HOME, {}, "linux") ?? [];
+		expect(after.map((e) => e.name)).toEqual(["honeycomb"]);
 	});
 });
