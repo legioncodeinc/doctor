@@ -353,6 +353,122 @@ describe("supervisor startup grace (PRD-067)", () => {
 	});
 });
 
+describe("supervisor backoff recovery on observed reachability (FIX B)", () => {
+	let harness: Harness | undefined;
+
+	afterEach(() => {
+		harness?.cleanup();
+		harness = undefined;
+	});
+
+	it("an EXTERNAL service stuck at the give-up threshold clears backoff once it answers 'degraded' again", async () => {
+		// Reproduce the nectar bug: restartPolicy:"external" means doctor's restart() is a
+		// no-op (returns false), so the daemon can climb to the give-up threshold and then get
+		// PINNED there (consecutiveRestartFailures:3, backoffRung:3, lastKnownHealth:"unreachable")
+		// even after the external actor brings it back. nectar boots "degraded" by design (no
+		// workspace bound), so its recovered state is `degraded`, not `ok`.
+		const restart = vi.fn(async () => false); // external: doctor never restarts it itself
+		let recovered = false;
+		const probe = async () =>
+			recovered
+				? ({ kind: "degraded" as const, reasons: { storage: "no-workspace-bound" } })
+				: ({ kind: "unreachable-refused" as const, detail: "ECONNREFUSED" });
+
+		harness = buildHarness({ probe, restart, cooldownMs: 0, restartGiveUpThreshold: 3 });
+
+		// Seed the stuck state exactly as observed on the box.
+		writeFileSync(
+			join(harness.workspaceDir, "state.json"),
+			`${JSON.stringify(
+				{ ...DEFAULT_STATE, lastKnownHealth: "unreachable", currentRung: 1, consecutiveRestartFailures: 3, backoffRung: 3 },
+				null,
+				2,
+			)}\n`,
+			"utf8",
+		);
+
+		// The external actor brought nectar back; it now answers `degraded` (up, no workspace).
+		recovered = true;
+		await harness.supervisor.tick();
+
+		const state = harness.readState();
+		// Backoff + restart-failure counters cleared on observed recovery of reachability, even
+		// though the coarse health is still `degraded` and doctor never restarted it.
+		expect(state.consecutiveRestartFailures).toBe(0);
+		expect(state.backoffRung).toBe(0);
+		expect(state.currentRung).toBe(1);
+		expect(state.lastKnownHealth).toBe("degraded");
+		expect(state.lastHealAt).not.toBeNull();
+	});
+
+	it("the recovery tick clears WITHOUT re-entering the exhausted give-up path; remediation resumes from rung 1 next tick", async () => {
+		// The recovery tick is a pure OBSERVATION: it clears the stuck counters and does NOT run
+		// remediation, so it can never re-trigger the advanced give-up (rung 2) off the stale
+		// threshold. A still-degraded service then remediates from a CLEAN rung-1 baseline on the
+		// following tick.
+		const restart = vi.fn(async () => false); // external service: restart is a no-op
+		const probe = async () => ({ kind: "degraded" as const, reasons: { schema: "missing_table" } });
+
+		// Observe whether rung 2 (the give-up advance) is ever requested.
+		const rung2Requested: number[] = [];
+		const observingRung2: Rung = {
+			rung: 2,
+			name: "reinstall-primary",
+			run: async () => {
+				rung2Requested.push(2);
+				return { ok: false, skipped: true, action: "reinstall-primary", detail: "observed-by-test" };
+			},
+		};
+
+		harness = buildHarness({ probe, restart, cooldownMs: 0, restartGiveUpThreshold: 3, extraRungs: [observingRung2] });
+		writeFileSync(
+			join(harness.workspaceDir, "state.json"),
+			`${JSON.stringify(
+				{ ...DEFAULT_STATE, lastKnownHealth: "unreachable", currentRung: 1, consecutiveRestartFailures: 3, backoffRung: 3 },
+				null,
+				2,
+			)}\n`,
+			"utf8",
+		);
+
+		// Tick 1 (recovery observation): counters cleared, NO remediation, NO give-up advance.
+		await harness.supervisor.tick();
+		expect(rung2Requested).toHaveLength(0);
+		expect(restart).not.toHaveBeenCalled();
+		expect(harness.readState().consecutiveRestartFailures).toBe(0);
+
+		// Tick 2 (still degraded, now from a clean baseline): rung 1 runs, still NOT rung 2.
+		await harness.supervisor.tick();
+		expect(rung2Requested).toHaveLength(0);
+		expect(restart).toHaveBeenCalledTimes(1);
+		expect(harness.readState().consecutiveRestartFailures).toBe(1);
+	});
+
+	it("does NOT clear when a service was already reachable (degraded -> degraded is not a recovery)", async () => {
+		// The clear is specifically an unreachable->answering TRANSITION. A service that was
+		// already `degraded` and stays `degraded` must not have its counters reset out from under
+		// an in-progress remediation.
+		const restart = vi.fn(async () => false);
+		const probe = async () => ({ kind: "degraded" as const, reasons: { schema: "still-bad" } });
+
+		harness = buildHarness({ probe, restart, cooldownMs: 0, restartGiveUpThreshold: 3 });
+		writeFileSync(
+			join(harness.workspaceDir, "state.json"),
+			`${JSON.stringify(
+				{ ...DEFAULT_STATE, lastKnownHealth: "degraded", currentRung: 1, consecutiveRestartFailures: 2, backoffRung: 2 },
+				null,
+				2,
+			)}\n`,
+			"utf8",
+		);
+
+		await harness.supervisor.tick();
+
+		// No recovery transition: the count is not force-reset (it advances via the normal path).
+		expect(harness.readState().consecutiveRestartFailures).not.toBe(0);
+	});
+});
+
 describe("crash net (design principle 1 / parent AC-8)", () => {
 	it("installs + uninstalls uncaughtException / unhandledRejection handlers", () => {
 		const before = process.listenerCount("uncaughtException");

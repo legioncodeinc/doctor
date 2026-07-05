@@ -262,9 +262,14 @@ describe("poll-loop (PRD-001c)", () => {
 		const broken = event.services.find((s) => s.name === "nectar");
 		const healthy = event.services.find((s) => s.name === "honeycomb");
 		expect(broken?.telemetryFault).toBe("missing");
-		// A broken /health-ok service degrades to "degraded" (fault flagged) rather than
-		// vanishing from the model or crashing the whole tick.
-		expect(broken?.health).toBe("degraded");
+		// A healthy `/health` probe is authoritative: a merely-MISSING telemetry DB is a
+		// telemetry fault, not a service fault, so the coarse health stays "ok" (the fault is
+		// still surfaced via telemetryFault, and metrics/deeplake are null). This is the fix
+		// for the live bug where a healthy service showed up degraded in hive just because
+		// doctor could not open its telemetry sidecar DB.
+		expect(broken?.health).toBe("ok");
+		expect(broken?.metrics).toEqual({});
+		expect(broken?.deeplake).toBeNull();
 		expect(healthy?.telemetryFault).toBeNull();
 		expect(healthy?.health).toBe("ok");
 	});
@@ -279,7 +284,11 @@ describe("poll-loop (PRD-001c)", () => {
 
 		const event = await loop.tick();
 		expect(event.services[0]?.telemetryFault).not.toBeNull();
-		expect(event.services[0]?.health).toBe("degraded");
+		// Probe is ok, so a malformed telemetry DB is a telemetry fault only: coarse health
+		// reflects the healthy probe, with metrics/deeplake null and the fault flagged.
+		expect(event.services[0]?.health).toBe("ok");
+		expect(event.services[0]?.metrics).toEqual({});
+		expect(event.services[0]?.deeplake).toBeNull();
 	});
 
 	it("c-AC-6: a telemetry DB whose service_status.name does not match the registry entry is rejected as malformed (no cross-wiring)", async () => {
@@ -297,14 +306,36 @@ describe("poll-loop (PRD-001c)", () => {
 		const loop = trackedPollLoop({ entries: [entry], clock, logger: silentLogger, probe: async () => ok });
 
 		const event = await loop.tick();
-		// The mismatch is treated exactly like a malformed DB: fault flagged, degraded, and
-		// NOTHING from the mispointed DB is attributed to the entry -- no status, no
-		// metrics, and no log rows.
+		// The mismatch is treated exactly like a malformed DB: fault flagged, and NOTHING from
+		// the mispointed DB is attributed to the entry -- no status, no metrics, no log rows.
+		// The `/health` probe is ok, so the coarse health reflects that ok (the malformed DB is
+		// a telemetry fault, not a service fault); nothing from the impostor DB leaks through.
 		expect(event.services[0]?.telemetryFault).toBe("malformed");
-		expect(event.services[0]?.health).toBe("degraded");
+		expect(event.services[0]?.health).toBe("ok");
 		expect(event.services[0]?.lastSeen).toBeNull();
 		expect(event.services[0]?.metrics).toEqual({});
+		expect(event.services[0]?.deeplake).toBeNull();
 		expect(event.logs).toEqual([]);
+	});
+
+	it("c-AC-6 (FIX A): a FAILING /health probe with a MISSING telemetry DB still degrades (does NOT regress to ok)", async () => {
+		// The counterpart to the ok-probe cases above: when the probe itself is failing, a
+		// telemetry fault must NOT be masked as ok. The service is genuinely unreachable, so the
+		// coarse health reflects the probe (unreachable) and the fault is still flagged. (The
+		// telemetry DB never exists here, so no open SQLite handle is held -- the missing-file
+		// path is exercised without deleting an open handle, which Windows would block.)
+		const dir = makeTmp();
+		const entry = daemon({
+			name: "honeycomb",
+			healthUrl: "http://127.0.0.1:3850/health",
+			telemetryDbPath: join(dir, "never-created.sqlite"),
+		});
+		const loop = trackedPollLoop({ entries: [entry], clock: fakeClock(), logger: silentLogger, probe: async () => refused });
+
+		const event = await loop.tick();
+		// Probe is failing, so the coarse health reflects the FAILING probe -- not masked as ok.
+		expect(event.services[0]?.health).toBe("unreachable");
+		expect(event.services[0]?.telemetryFault).toBe("missing");
 	});
 
 	it("c-AC-6: recovers on a later tick once the telemetry DB becomes available again", async () => {
