@@ -659,7 +659,15 @@ export function createDoctor(options: CreateDoctorOptions = {}): Doctor {
 	const buildDaemon = (entry: DaemonEntry): BuiltDaemon => {
 		const entryProbe: () => ReturnType<typeof probeHealth> =
 			options.probe ?? (() => probeHealth({ healthUrl: entry.healthUrl, timeoutMs: config.probeTimeoutMs }));
-		const entryIsHealthy = async (): Promise<boolean> => (await entryProbe()).kind === "ok";
+		// Rung 1's lock-held-and-answering guard treats a DEGRADED daemon as alive: honeycomb and
+		// nectar boot degraded by design until a workspace is bound (storage unreachable before the
+		// first login), and a restart cannot mint credentials — restarting on `degraded` just loops
+		// the daemon on every fresh install. Only an explicit no-response (unreachable-refused /
+		// unreachable-timeout) lets the restart proceed.
+		const entryIsHealthy = async (): Promise<boolean> => {
+			const kind = (await entryProbe()).kind;
+			return kind === "ok" || kind === "degraded";
+		};
 		const entryStateStore: StateStore = createStateStore({ workspaceDir: config.workspaceDir, name: entry.name, logger });
 		const entryIncidents = createIncidentLog({ workspaceDir: config.workspaceDir, name: entry.name, logger });
 		// Entry-LOCAL restart timestamp: the cooldown gates only THIS entry's restarts (a-AC-8),
