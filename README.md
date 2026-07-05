@@ -166,15 +166,24 @@ Run `doctor` with no arguments for the banner and menu. The full surface:
 | `doctor status` | daemon health, service state, versions, last heal, opt-out flags |
 | `doctor diagnose` | classify health and print the recommended fix, taking **no** action |
 | `doctor heal` | run the remediation ladder once (gated steps confirm first) |
+| `doctor start` / `doctor stop` | start or stop Doctor's own daemon (via the OS service when registered) |
 | `doctor restart` | restart the primary daemon (rung 1) |
 | `doctor reinstall` | reinstall the primary daemon (rung 2) |
 | `doctor uninstall-hivemind` | remove a conflicting `@deeplake/hivemind` global (rung 3, confirms) |
 | `doctor update [--check]` | update the primary daemon via the blessed gate |
 | `doctor self-update` | update Doctor's own package (the **only** thing that does) |
 | `doctor install-service` / `uninstall-service` | register or remove the OS service |
+| `doctor uninstall` | remove Doctor's service unit, registry entry, and state dir (npm package stays) |
+| `doctor purge` | **DESTRUCTIVE:** wipe every Apiary asset on the machine (confirms, see below) |
 | `doctor logs` | tail incident logs for all daemons, or one via `--daemon <name>` |
 
 Doctor never updates itself in the background. `self-update` is the single, explicit way to bump it, and there is deliberately no `clear-credentials` command: credential purges are only ever recommended via escalation, never automated.
+
+### The escape hatch: `doctor purge`
+
+`doctor purge` returns the machine to a pre-Apiary state: every product's OS service unit (current and legacy labels), every Apiary npm global (including legacy `@deeplake/hivemind`), and the state roots `~/.apiary`, `~/.deeplake`, `~/.hivemind`, and `~/.honeycomb`. Nothing outside that closed allow-list is ever touched, and it refuses outright if an override like `APIARY_HOME` points at a filesystem root or your home directory.
+
+It is user-initiated only, never a remediation rung. Interactively it prints exactly what will be destroyed, names that `~/.deeplake` holds shared Deeplake credentials also used by a standalone Hivemind install, and requires you to type `purge` to proceed; `--yes` is the only non-interactive bypass. Doctor removes its own service and package last, so a partially failed purge leaves the tool that can resume it, and re-running is safe. No working Doctor on the machine? The self-contained script at [get.theapiary.sh/uninstall](https://get.theapiary.sh) does the same job with no Apiary tooling required.
 
 <img src="assets/brand/divider-minor.svg" width="100%" height="3">
 
