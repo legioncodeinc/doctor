@@ -41,6 +41,16 @@ export const RESTART_SEC = 5 as const;
 export const WINDOWS_RESTART_INTERVAL = "PT1M" as const;
 
 /**
+ * The absolute path to `conhost.exe`, used to wrap the Scheduled Task's action so it runs
+ * headless (no popped console window at logon/run). Windows Task Scheduler's default
+ * `InteractiveToken` logon runs the action's console app attached to a NEW, visible
+ * console; `conhost.exe --headless <original command line>` hosts that console off-screen
+ * instead. Fixed system path (never PATH-resolved) so the wrapper never depends on the
+ * caller's environment.
+ */
+export const WINDOWS_CONHOST_PATH = "C:\\Windows\\System32\\conhost.exe" as const;
+
+/**
  * Quote a single token for a systemd `ExecStart` line. systemd does NOT invoke a shell, but a
  * bare token splits on whitespace, so a space-bearing exec path would mis-split. Wrapping the
  * token in double quotes preserves the spaces; per systemd unit syntax the only characters that
@@ -138,10 +148,23 @@ WantedBy=default.target
  * The `RestartOnFailure`/`Interval` uses {@link WINDOWS_RESTART_INTERVAL} (`PT1M`), NOT
  * {@link RESTART_SEC} (seconds): Task Scheduler rejects sub-minute intervals (IRD-192 root cause),
  * so the seconds value the POSIX managers take is deliberately not reused here.
+ *
+ * Two Windows 11 25H2 (Administrator Protection) fixes, both proven on a live machine:
+ *   - `plan.windowsUserId` (a SID, or a `domain\user` fallback - see `windows-identity.ts`)
+ *     scopes BOTH the `<LogonTrigger>` and the `<Principal>` to that user. Windows refuses
+ *     an unscoped "any user" logon trigger without elevation ("Access is denied."), even
+ *     for a per-user task. Absent/empty, the XML renders with no `<UserId>` (pre-fix shape).
+ *   - The action's `<Command>` is {@link WINDOWS_CONHOST_PATH} (`conhost.exe --headless`)
+ *     wrapping the original node + bin invocation, so logon/run does not pop a visible
+ *     console window (`InteractiveToken` would otherwise attach one).
  */
 export function renderScheduledTaskXml(plan: ServicePlan): string {
 	const node = escapeXml(process.execPath);
 	const exec = escapeXml(plan.execPath);
+	const userIdXml =
+		plan.windowsUserId !== undefined && plan.windowsUserId !== ""
+			? `\n      <UserId>${escapeXml(plan.windowsUserId)}</UserId>`
+			: "";
 	return `<?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <RegistrationInfo>
@@ -150,11 +173,11 @@ export function renderScheduledTaskXml(plan: ServicePlan): string {
   </RegistrationInfo>
   <Triggers>
     <LogonTrigger>
-      <Enabled>true</Enabled>
+      <Enabled>true</Enabled>${userIdXml}
     </LogonTrigger>
   </Triggers>
   <Principals>
-    <Principal id="Author">
+    <Principal id="Author">${userIdXml}
       <LogonType>InteractiveToken</LogonType>
       <RunLevel>LeastPrivilege</RunLevel>
     </Principal>
@@ -176,8 +199,8 @@ export function renderScheduledTaskXml(plan: ServicePlan): string {
   </Settings>
   <Actions Context="Author">
     <Exec>
-      <Command>${node}</Command>
-      <Arguments>"${exec}" ${DOCTOR_RUN_COMMAND}</Arguments>
+      <Command>${WINDOWS_CONHOST_PATH}</Command>
+      <Arguments>--headless "${node}" "${exec}" ${DOCTOR_RUN_COMMAND}</Arguments>
     </Exec>
   </Actions>
 </Task>

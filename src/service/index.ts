@@ -44,6 +44,7 @@ import {
 	type ServicePlan,
 } from "./platform.js";
 import { renderUnit } from "./templates.js";
+import { liveWindowsIdentityFacts, resolveWindowsUserId, type WindowsIdentityFacts } from "./windows-identity.js";
 
 /** A coarse, classified service status (what `doctor status` reports). */
 export type ServiceStatus = "running" | "not-running" | "unknown";
@@ -99,6 +100,12 @@ export interface ServiceModuleDeps {
 	readonly uid?: number;
 	/** Override the resolved environment (tests inject a fixed platform/home/privilege). */
 	readonly environment?: ServiceEnvironment;
+	/**
+	 * Windows LogonTrigger/Principal identity facts (schtasks `install()` only). Default:
+	 * the live `process.env` facts ({@link liveWindowsIdentityFacts}). Injectable so a test
+	 * can force the whoami/domain-fallback path without touching the real environment.
+	 */
+	readonly windowsIdentity?: WindowsIdentityFacts;
 	/** Logger (default: silent). */
 	readonly logger?: Logger;
 }
@@ -191,6 +198,7 @@ export function createServiceModule(deps: ServiceModuleDeps): FullServiceModule 
 	const uid = deps.uid ?? liveUid();
 	const environment =
 		deps.environment ?? resolveServiceContext(deps.execPath, deps.preferSystemScope ?? false);
+	const windowsIdentity = deps.windowsIdentity ?? liveWindowsIdentityFacts();
 
 	/** Resolve the plan, mapping an unsupported platform to a thrown error the caller catches. */
 	function plan(): ServicePlan {
@@ -222,6 +230,16 @@ export function createServiceModule(deps: ServiceModuleDeps): FullServiceModule 
 				// Best-effort migration cleanup only; a remove failure never blocks the install.
 			}
 
+			// 0.5) Windows only: resolve the LogonTrigger/Principal UserId BEFORE rendering the
+			//      XML (Windows 11 25H2 Administrator Protection fix - see windows-identity.ts).
+			//      Never blocks the install: an unresolved SID/fallback just renders with no
+			//      UserId, matching the pre-fix template.
+			let renderPlan: ServicePlan = p;
+			if (p.manager === "schtasks") {
+				const windowsUserId = await resolveWindowsUserId(runner, windowsIdentity);
+				if (windowsUserId !== undefined) renderPlan = { ...p, windowsUserId };
+			}
+
 			// 1) Write the unit file FIRST (when this manager is file-based). schtasks consumes the
 			//    XML file too, so a non-empty unitPath OR the schtasks manager means we lay down text.
 			const needsFile = p.unitPath !== "" || p.manager === "schtasks";
@@ -234,7 +252,7 @@ export function createServiceModule(deps: ServiceModuleDeps): FullServiceModule 
 						unitTarget = `${p.stateDir}/doctor-task.xml`;
 					}
 					fs.mkdirp(dirname(unitTarget));
-					fs.writeFile(unitTarget, renderUnit(p));
+					fs.writeFile(unitTarget, renderUnit(renderPlan));
 				} catch (error) {
 					return {
 						ok: false,
@@ -520,3 +538,5 @@ export async function isServiceRegistered(deps: ServiceModuleDeps): Promise<bool
 
 export { resolveServicePlan, resolveServiceContext } from "./platform.js";
 export type { ServicePlan, ServiceEnvironment } from "./platform.js";
+export { liveWindowsIdentityFacts, resolveWindowsUserId, SID_PATTERN } from "./windows-identity.js";
+export type { WindowsIdentityFacts } from "./windows-identity.js";

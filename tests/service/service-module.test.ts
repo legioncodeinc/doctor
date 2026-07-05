@@ -80,7 +80,9 @@ describe("install - writes the unit file then runs the manager argv", () => {
 			execPath: "C:\\bin\\doctor.cmd",
 			runner,
 			fs,
-			environment: fixedEnv({ platform: "win32", home: "C:\\Users\\t" }),
+			environment: fixedEnv({ platform: "win32", home: "C:\\Users\\t", execPath: "C:\\bin\\doctor.cmd" }),
+			// Deterministic identity resolution (no live process.env leakage into this assertion).
+			windowsIdentity: { systemRoot: "C:\\Windows" },
 		});
 
 		const result = await module.install();
@@ -89,16 +91,113 @@ describe("install - writes the unit file then runs the manager argv", () => {
 		// IRD-192 AC-2: the staged XML carries the Task-Scheduler-valid PT1M interval.
 		expect(fs.files.get(staged)).toContain("<Interval>PT1M</Interval>");
 		expect(fs.files.get(staged)).toContain("<Task ");
-		// Decision #32 migration: the legacy task name is deleted first, then /Create runs.
+		// Decision #32 migration: the legacy task name is deleted first, then the LogonTrigger/
+		// Principal UserId is probed (whoami), then /Create runs.
 		expect(runner.calls[0]).toEqual({
 			command: "schtasks",
 			args: ["/Delete", "/TN", "HiveDoctor", "/F"],
 		});
-		expect(runner.calls[1]).toEqual({
+		expect(runner.calls[1]?.command).toBe("C:\\Windows\\System32\\whoami.exe");
+		expect(runner.calls[2]).toEqual({
 			command: "schtasks",
 			args: ["/Create", "/XML", staged, "/TN", "doctor", "/F"],
 		});
 		expect(result.ok).toBe(true);
+	});
+
+	// Windows 11 25H2 (Administrator Protection) fix: install() resolves the SID/fallback
+	// BEFORE rendering, so the staged XML actually carries the scoped UserId schtasks needs
+	// to accept a per-user LogonTrigger without elevation.
+	it("Windows: a resolved whoami SID is scoped onto the staged XML's LogonTrigger + Principal", async () => {
+		const sid = "S-1-5-21-1-2-3-1001";
+		const runner = createRecordingRunner((command, args) =>
+			command === "C:\\Windows\\System32\\whoami.exe" && args[0] === "/user"
+				? { ok: true, code: 0, stdout: `"CORP\\alice","${sid}"\r\n`, stderr: "" }
+				: { ok: true, code: 0, stdout: "", stderr: "" },
+		);
+		const fs = createMemoryFs();
+		const module = createServiceModule({
+			execPath: "C:\\bin\\doctor.cmd",
+			runner,
+			fs,
+			environment: fixedEnv({ platform: "win32", home: "C:\\Users\\t" }),
+			windowsIdentity: { systemRoot: "C:\\Windows" },
+		});
+
+		const result = await module.install();
+
+		const staged = "C:\\Users\\t/.apiary/doctor/doctor-task.xml";
+		const xml = fs.files.get(staged);
+		expect(xml).toContain(`<UserId>${sid}</UserId>`);
+		// Scoped onto BOTH the LogonTrigger and the Principal (2 occurrences, no stray extra).
+		expect((xml?.split("<UserId>").length ?? 1) - 1).toBe(2);
+		expect(result.ok).toBe(true);
+	});
+
+	it("Windows: whoami failing AND no domain/user facts stages the XML with no UserId (pre-fix shape)", async () => {
+		const runner = createRecordingRunner(() => ({ ok: false, code: 1, stdout: "", stderr: "access denied" }));
+		const fs = createMemoryFs();
+		const module = createServiceModule({
+			execPath: "C:\\bin\\doctor.cmd",
+			runner,
+			fs,
+			environment: fixedEnv({ platform: "win32", home: "C:\\Users\\t" }),
+			windowsIdentity: { systemRoot: "C:\\Windows" },
+		});
+
+		await module.install();
+
+		const staged = "C:\\Users\\t/.apiary/doctor/doctor-task.xml";
+		expect(fs.files.get(staged)).not.toContain("<UserId>");
+	});
+
+	it("Windows: whoami failing falls back to the injected domain\\user facts on the staged XML", async () => {
+		const runner = createRecordingRunner(() => ({ ok: false, code: 1, stdout: "", stderr: "access denied" }));
+		const fs = createMemoryFs();
+		const module = createServiceModule({
+			execPath: "C:\\bin\\doctor.cmd",
+			runner,
+			fs,
+			environment: fixedEnv({ platform: "win32", home: "C:\\Users\\t" }),
+			windowsIdentity: { systemRoot: "C:\\Windows", userDomain: "CORP", userName: "alice" },
+		});
+
+		await module.install();
+
+		const staged = "C:\\Users\\t/.apiary/doctor/doctor-task.xml";
+		expect(fs.files.get(staged)).toContain("<UserId>CORP\\alice</UserId>");
+	});
+
+	it("Windows: the staged XML wraps the action in conhost.exe --headless (no popped console)", async () => {
+		const runner = createRecordingRunner();
+		const fs = createMemoryFs();
+		const module = createServiceModule({
+			execPath: "C:\\bin\\doctor.cmd",
+			runner,
+			fs,
+			environment: fixedEnv({ platform: "win32", home: "C:\\Users\\t", execPath: "C:\\bin\\doctor.cmd" }),
+			windowsIdentity: { systemRoot: "C:\\Windows" },
+		});
+
+		await module.install();
+
+		const staged = "C:\\Users\\t/.apiary/doctor/doctor-task.xml";
+		const xml = fs.files.get(staged);
+		expect(xml).toContain("<Command>C:\\Windows\\System32\\conhost.exe</Command>");
+		expect(xml).toContain('<Arguments>--headless "');
+		expect(xml).toContain('"C:\\bin\\doctor.cmd" run</Arguments>');
+	});
+
+	it("a non-Windows install never probes whoami (schtasks-only step)", async () => {
+		const runner = createRecordingRunner();
+		const module = createServiceModule({
+			execPath: "/usr/bin/doctor",
+			runner,
+			fs: createMemoryFs(),
+			environment: fixedEnv({ platform: "linux" }),
+		});
+		await module.install();
+		expect(runner.calls.some((c) => /whoami/i.test(c.command))).toBe(false);
 	});
 
 	it("a unit-write failure (EACCES) returns a message, never throws", async () => {

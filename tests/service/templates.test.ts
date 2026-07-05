@@ -15,6 +15,7 @@ import {
 	renderScheduledTaskXml,
 	renderSystemdUnit,
 	renderUnit,
+	WINDOWS_CONHOST_PATH,
 	WINDOWS_RESTART_INTERVAL,
 } from "../../src/service/templates.js";
 import { fixedEnv } from "./helpers.js";
@@ -128,9 +129,46 @@ describe("renderScheduledTaskXml (Windows)", () => {
 		expect(xml).toContain("<MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>");
 	});
 
-	it("passes the exec path as a quoted Argument under a node Command (no shell parse)", () => {
-		// The Command is node; the bin path is a quoted argument so spaces are safe.
-		expect(xml).toContain(`<Arguments>"C:\\bin\\doctor.cmd" ${DOCTOR_RUN_COMMAND}</Arguments>`);
+	// Windows 11 25H2 (Administrator Protection) fix #2: the action runs under conhost.exe
+	// --headless so InteractiveToken does not pop a visible console at logon/run, with node
+	// and the original argv passed through as quoted arguments (no shell parse).
+	it("wraps the action in conhost.exe --headless, passing node + the exec path + run as quoted arguments", () => {
+		expect(xml).toContain(`<Command>${WINDOWS_CONHOST_PATH}</Command>`);
+		expect(xml).toContain(
+			`<Arguments>--headless "${escapeXml(process.execPath)}" "C:\\bin\\doctor.cmd" ${DOCTOR_RUN_COMMAND}</Arguments>`,
+		);
+	});
+
+	// Windows 11 25H2 (Administrator Protection) fix #1: with no windowsUserId resolved, the
+	// pre-fix shape is preserved - no <UserId> anywhere in the document.
+	it("with no windowsUserId resolved, renders no <UserId> at all (pre-fix shape)", () => {
+		expect(xml).not.toContain("<UserId>");
+	});
+});
+
+describe("renderScheduledTaskXml - windowsUserId (Windows 11 25H2 Administrator Protection fix)", () => {
+	const basePlan = resolveServicePlan(
+		fixedEnv({ platform: "win32", home: "C:\\Users\\t", execPath: "C:\\bin\\doctor.cmd" }),
+	);
+
+	it("a resolved SID is scoped onto BOTH the LogonTrigger and the Principal", () => {
+		const sid = "S-1-5-21-111111111-222222222-333333333-1001";
+		const xml = renderScheduledTaskXml({ ...basePlan, windowsUserId: sid });
+		expect(xml).toMatch(/<LogonTrigger>\s*<Enabled>true<\/Enabled>\s*<UserId>S-1-5-21-111111111-222222222-333333333-1001<\/UserId>/);
+		expect(xml).toMatch(/<Principal id="Author">\s*<UserId>S-1-5-21-111111111-222222222-333333333-1001<\/UserId>/);
+		// Exactly two occurrences: LogonTrigger + Principal, no stray extra.
+		expect(xml.split("<UserId>").length - 1).toBe(2);
+	});
+
+	it("a domain\\user fallback UserId is XML-escaped", () => {
+		const xml = renderScheduledTaskXml({ ...basePlan, windowsUserId: `A&B\\us"er` });
+		expect(xml).toContain("<UserId>A&amp;B\\us&quot;er</UserId>");
+		expect(xml).not.toContain(`A&B\\us"er`);
+	});
+
+	it("an empty-string windowsUserId is treated the same as absent (no <UserId>)", () => {
+		const xml = renderScheduledTaskXml({ ...basePlan, windowsUserId: "" });
+		expect(xml).not.toContain("<UserId>");
 	});
 });
 

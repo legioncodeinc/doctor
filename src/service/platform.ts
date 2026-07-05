@@ -107,6 +107,16 @@ export interface ServicePlan {
 	 * launchd log paths, so there is exactly one source of truth for the location.
 	 */
 	readonly stateDir: string;
+	/**
+	 * The value to scope the Scheduled Task `<LogonTrigger>`/`<Principal>` `<UserId>` to
+	 * (a SID, or a `domain\user` fallback) - schtasks only, resolved asynchronously at
+	 * install time (see `windows-identity.ts`) and layered onto the plan just before
+	 * rendering, since {@link resolveServicePlan} itself stays synchronous/pure. Absent
+	 * (or empty) renders the Windows Scheduled Task XML with no `<UserId>` at all, matching
+	 * the pre-fix template. Windows 11 25H2 with Administrator Protection rejects an
+	 * unscoped "any user" logon trigger without elevation, hence the fix.
+	 */
+	readonly windowsUserId?: string;
 }
 
 /** Gather the real {@link ServiceEnvironment} at the edge (the one impure call site). */
