@@ -35,7 +35,16 @@ import {
 	createNpmHivemindDetector,
 	createExecFileRunner,
 } from "../remediation.js";
-import { createServiceModule, serviceStatus } from "../service/index.js";
+import {
+	createServiceModule,
+	deregisterLegacyUnit,
+	isServiceRegistered,
+	serviceStart,
+	serviceStatus,
+	serviceStop,
+} from "../service/index.js";
+import { readProductUninstallState, removeProductState } from "../product-uninstall.js";
+import { createPurgeEngine } from "../purge/engine.js";
 import { createStateStore } from "../state.js";
 import { createLifecycleTelemetry } from "../telemetry/capture.js";
 import {
@@ -53,7 +62,7 @@ import { createIncidentsTail } from "./incidents-tail.js";
 import { resolveOptOut } from "./opt-out.js";
 import { createSelfUpdate } from "./self-update.js";
 import { createUpdateActions } from "./update-actions.js";
-import type { CliContext, ConfirmFn, OutputSink } from "./context.js";
+import type { CliContext, ConfirmFn, ConfirmTokenFn, OutputSink } from "./context.js";
 import type { HealthClassification } from "../health-probe.js";
 import type { RungContext } from "../remediation.js";
 
@@ -78,6 +87,26 @@ function realConfirm(): ConfirmFn {
 		try {
 			const answer = (await rl.question(`${question} [y/N] `)).trim().toLowerCase();
 			return answer === "y" || answer === "yes";
+		} finally {
+			rl.close();
+		}
+	};
+}
+
+/**
+ * A readline-backed TYPED-TOKEN confirm prompt for `purge` (PRD-003c c-AC-1): resolves
+ * true ONLY on an exact (trimmed) match of `expectedToken`. A non-TTY stdin never even
+ * opens the prompt (the caller in dispatch.ts already gates on {@link CliContext.isInteractive}
+ * before reaching this, but the check is repeated here too so this function is safe to call
+ * standalone and NEVER hangs waiting on input that will never arrive).
+ */
+function realConfirmToken(): ConfirmTokenFn {
+	return async (question: string, expectedToken: string): Promise<boolean> => {
+		if (!process.stdin.isTTY) return false;
+		const rl = createInterface({ input: process.stdin, output: process.stdout });
+		try {
+			const answer = (await rl.question(`${question}\nType "${expectedToken}" to confirm: `)).trim();
+			return answer === expectedToken;
 		} finally {
 			rl.close();
 		}
@@ -160,13 +189,30 @@ export function buildCliContext(argv: readonly string[]): CliContext {
 	const readInstalledPackageVersion = createInstalledPackageVersionReader({ runner, pkg: PRIMARY_PACKAGE });
 	const isHealthy = async (): Promise<boolean> => (await probe()).kind === "ok";
 
+	// The real 064b OS-service identity. The unit it registers execs `node <this-script> run`,
+	// so the exec path is the running CLI script (process.argv[1]); the bundled bin resolves to
+	// the same path under a global install. Userland scope is the default; an operator opts into
+	// a system unit via DOCTOR_SERVICE_SYSTEM=1 (the enterprise path, parent index ruling).
+	// Resolved BEFORE the restart rung below so `restart`'s PRD-003b wiring can use it.
+	const serviceExecPath = process.argv[1] ?? "doctor";
+	const preferSystemScope = (env["DOCTOR_SERVICE_SYSTEM"] ?? "") === "1";
+	const serviceDeps = { execPath: serviceExecPath, preferSystemScope, runner, logger };
+
 	let lastRestartAt: number | null = null;
 	const clock = { now: () => Date.now() };
 	const restartRung = createRestartRung({
-		// The CLI cannot itself restart the OS service (064b); a manual `restart` reports it.
+		// PRD-003b b-AC-1: the only OS service Doctor itself controls is its OWN (there is no
+		// cross-product service control - each product owns its own registration). A manual
+		// `doctor restart`/`doctor heal` therefore stop+starts DOCTOR'S OWN service through the
+		// same manager that already restarts it on crash; it does NOT restart the SUPERVISED
+		// primary daemon's OS service (honeycomb has no such surface exposed to doctor). This
+		// is a deliberate, narrower scope than the menu text implies; see the PRD-003b W1-D
+		// report for the full rationale.
 		restart: async () => {
-			logger.warn("cli.restart_no_os_service");
-			return false;
+			await serviceStop(serviceDeps);
+			const started = await serviceStart(serviceDeps);
+			if (!started.ok) logger.warn("cli.restart_self_service_failed", { detail: started.message });
+			return started.ok;
 		},
 		readDaemonPid: async () => null,
 		isHealthy,
@@ -225,19 +271,37 @@ export function buildCliContext(argv: readonly string[]): CliContext {
 
 	const selfUpdate = createSelfUpdate({ runner, logger });
 
-	// The real 064b OS-service module. The unit it registers execs `node <this-script> run`,
-	// so the exec path is the running CLI script (process.argv[1]); the bundled bin resolves to
-	// the same path under a global install. Userland scope is the default; an operator opts into
-	// a system unit via DOCTOR_SERVICE_SYSTEM=1 (the enterprise path, parent index ruling).
-	const serviceExecPath = process.argv[1] ?? "doctor";
-	const preferSystemScope = (env["DOCTOR_SERVICE_SYSTEM"] ?? "") === "1";
-	const serviceModule = createServiceModule({ execPath: serviceExecPath, preferSystemScope, runner, logger });
+	// The real 064b OS-service module (install/uninstall/start/stop), built once and shared
+	// by every seam below (`serviceModule`, `serviceLifecycle`, `productUninstall`, `purge`).
+	const serviceModule = createServiceModule(serviceDeps);
+
+	// PRD-003b b-AC-2/3/4/6: the fuller `uninstall` verb's deps, layered on top of the SAME
+	// `serviceModule.uninstall()` the legacy `uninstall-service` verb also calls (unchanged
+	// behavior there), PLUS a best-effort legacy-label deregister (b-AC-2 - `uninstall-service`
+	// itself is left untouched so its exact-argv tests stay valid), PLUS the registry-entry +
+	// state-dir removal (product-uninstall.ts).
+	const productUninstall = {
+		precheck: () => readProductUninstallState({ home, env }),
+		serviceStatusAsync: () => serviceStatus(serviceDeps),
+		isServiceRegistered: () => isServiceRegistered(serviceDeps),
+		serviceUninstall: async () => {
+			await deregisterLegacyUnit(serviceDeps);
+			return serviceModule.uninstall();
+		},
+		removeState: () => removeProductState({ home, env }),
+	};
+
+	// PRD-003c: the destructive `purge` engine, wired to the SAME runner + service module so
+	// nothing here spins up a second, differently-configured execFile path.
+	const purge = createPurgeEngine({ runner, serviceModule, home, env });
 
 	const rungContextFor = (classification: HealthClassification): RungContext => ({ classification, logger });
 
 	return {
 		io: realOutputSink(),
 		confirm: realConfirm(),
+		confirmToken: realConfirmToken(),
+		isInteractive: () => process.stdin.isTTY === true,
 		colors,
 		deps: {
 			probe,
@@ -260,8 +324,12 @@ export function buildCliContext(argv: readonly string[]): CliContext {
 			// IRD-192 AC-5: the real OS-service-manager probe (schtasks/launchctl/systemctl is-active),
 			// bounded by SERVICE_COMMAND_TIMEOUT_MS inside serviceStatus(). Never throws; resolves
 			// "unknown" on a spawn error or unsupported platform, so `status` stays fast and fail-safe.
-			serviceStateAsync: () => serviceStatus({ execPath: serviceExecPath, preferSystemScope, runner }),
+			serviceStateAsync: () => serviceStatus(serviceDeps),
 			serviceModule,
+			// PRD-003b b-AC-1: the SAME module also satisfies the leaner start/stop seam.
+			serviceLifecycle: serviceModule,
+			productUninstall,
+			purge,
 			lifecycle,
 			optOut,
 			// `update --check` previews via previewUpdate() (READ-ONLY, never mutates); `update`

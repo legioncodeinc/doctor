@@ -37,6 +37,16 @@ describe("command table (PRD-064f)", () => {
 		}
 	});
 
+	it("PRD-003b/003c: lists start, stop, uninstall, and purge alongside the existing verbs", () => {
+		for (const cmd of ["start", "stop", "uninstall", "purge", "install-service", "uninstall-service"]) {
+			expect(KNOWN_COMMANDS.has(cmd)).toBe(true);
+		}
+		expect(resolveCommand("start")).toBe("start");
+		expect(resolveCommand("stop")).toBe("stop");
+		expect(resolveCommand("uninstall")).toBe("uninstall");
+		expect(resolveCommand("purge")).toBe("purge");
+	});
+
 	it("resolveCommand maps known tokens and rejects unknown/empty", () => {
 		expect(resolveCommand("status")).toBe("status");
 		expect(resolveCommand("  diagnose  ")).toBe("diagnose");

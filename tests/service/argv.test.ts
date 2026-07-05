@@ -8,7 +8,9 @@ import { describe, expect, it } from "vitest";
 import {
 	installCommands,
 	launchdServiceTarget,
+	startCommands,
 	statusCommand,
+	stopCommands,
 	uninstallCommands,
 } from "../../src/service/argv.js";
 import { resolveServicePlan, SERVICE_LABEL, SYSTEMD_UNIT_NAME, WINDOWS_TASK_NAME } from "../../src/service/platform.js";
@@ -35,6 +37,18 @@ describe("launchd argv (macOS, user scope)", () => {
 			command: "launchctl",
 			args: ["print", `gui/${UID}/${SERVICE_LABEL}`],
 		});
+	});
+
+	it("b-AC-1: start kickstarts the existing service target", () => {
+		expect(startCommands(plan, UID)).toEqual([
+			{ command: "launchctl", args: ["kickstart", "-k", `gui/${UID}/${SERVICE_LABEL}`] },
+		]);
+	});
+
+	it("b-AC-1: stop sends SIGTERM without unloading the unit (no bootout)", () => {
+		expect(stopCommands(plan, UID)).toEqual([
+			{ command: "launchctl", args: ["kill", "SIGTERM", `gui/${UID}/${SERVICE_LABEL}`] },
+		]);
 	});
 
 	it("system scope targets the `system` domain, not gui/<uid>", () => {
@@ -70,6 +84,14 @@ describe("systemd argv (Linux)", () => {
 			command: "systemctl",
 			args: ["--user", "is-active", SYSTEMD_UNIT_NAME],
 		});
+	});
+
+	it("b-AC-1: user start: systemctl --user start doctor.service", () => {
+		expect(startCommands(userPlan, UID)).toEqual([{ command: "systemctl", args: ["--user", "start", SYSTEMD_UNIT_NAME] }]);
+	});
+
+	it("b-AC-1: user stop: systemctl --user stop doctor.service", () => {
+		expect(stopCommands(userPlan, UID)).toEqual([{ command: "systemctl", args: ["--user", "stop", SYSTEMD_UNIT_NAME] }]);
 	});
 
 	it("system scope drops the --user flag", () => {
@@ -113,6 +135,14 @@ describe("schtasks argv (Windows per-user, the default)", () => {
 			args: ["/Query", "/TN", WINDOWS_TASK_NAME],
 		});
 	});
+
+	it("b-AC-1: start: /Run /TN Doctor", () => {
+		expect(startCommands(plan, UID)).toEqual([{ command: "schtasks", args: ["/Run", "/TN", WINDOWS_TASK_NAME] }]);
+	});
+
+	it("b-AC-1: stop: /End /TN Doctor", () => {
+		expect(stopCommands(plan, UID)).toEqual([{ command: "schtasks", args: ["/End", "/TN", WINDOWS_TASK_NAME] }]);
+	});
 });
 
 describe("sc.exe argv (Windows Service, enterprise opt-in)", () => {
@@ -137,5 +167,13 @@ describe("sc.exe argv (Windows Service, enterprise opt-in)", () => {
 
 	it("status: sc query", () => {
 		expect(statusCommand(plan, UID)).toEqual({ command: "sc", args: ["query", WINDOWS_TASK_NAME] });
+	});
+
+	it("b-AC-1: start: sc start", () => {
+		expect(startCommands(plan, UID)).toEqual([{ command: "sc", args: ["start", WINDOWS_TASK_NAME] }]);
+	});
+
+	it("b-AC-1: stop: sc stop", () => {
+		expect(stopCommands(plan, UID)).toEqual([{ command: "sc", args: ["stop", WINDOWS_TASK_NAME] }]);
 	});
 });

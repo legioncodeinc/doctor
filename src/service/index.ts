@@ -20,17 +20,19 @@
  * Built-ins only: the production fs uses node:fs, the runner uses node:child_process.execFile.
  */
 
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 
 import { createExecFileRunner, type CommandResult, type CommandRunner } from "../remediation.js";
 import type { Logger } from "../logger.js";
 import { silentLogger } from "../logger.js";
-import type { ServiceModule, ServiceResult } from "../cli/service-stub.js";
+import type { ServiceLifecycleModule, ServiceModule, ServiceResult } from "../cli/service-stub.js";
 import {
 	installCommands,
 	legacyUninstallCommands,
+	startCommands,
 	statusCommand,
+	stopCommands,
 	uninstallCommands,
 	type ServiceCommand,
 } from "./argv.js";
@@ -57,6 +59,11 @@ export interface ServiceFs {
 	writeFile(path: string, content: string): void;
 	/** Remove a file. Must NOT throw when the file is already absent. */
 	removeFile(path: string): void;
+	/**
+	 * Does a path exist? Used by {@link isServiceRegistered} (PRD-003b b-AC-6 fix) to detect
+	 * a registered-but-inactive unit FILE independent of the unit's runtime activity.
+	 */
+	exists(path: string): boolean;
 }
 
 /** The production {@link ServiceFs} over node:fs. */
@@ -71,6 +78,9 @@ export function createNodeServiceFs(): ServiceFs {
 		removeFile(path: string): void {
 			// `force: true` makes a missing file a no-op (idempotent uninstall).
 			rmSync(path, { force: true });
+		},
+		exists(path: string): boolean {
+			return existsSync(path);
 		},
 	};
 }
@@ -162,10 +172,19 @@ async function runAll(
 }
 
 /**
- * Build the real {@link ServiceModule}. The composition root / CLI inject the resolved
+ * The full module {@link createServiceModule} returns: {@link ServiceModule}'s
+ * install/uninstall PLUS {@link ServiceLifecycleModule}'s start/stop (PRD-003b b-AC-1).
+ * A caller that only cares about install/uninstall (every existing 064b callsite/fixture)
+ * keeps working unchanged via structural typing; the CLI wires this same object into both
+ * `deps.serviceModule` and `deps.serviceLifecycle`.
+ */
+export type FullServiceModule = ServiceModule & ServiceLifecycleModule;
+
+/**
+ * Build the real {@link FullServiceModule}. The composition root / CLI inject the resolved
  * exec path; tests inject the runner + fs + a fixed environment so nothing real runs.
  */
-export function createServiceModule(deps: ServiceModuleDeps): ServiceModule {
+export function createServiceModule(deps: ServiceModuleDeps): FullServiceModule {
 	const runner = deps.runner ?? createExecFileRunner();
 	const fs = deps.fs ?? createNodeServiceFs();
 	const logger = deps.logger ?? silentLogger;
@@ -285,7 +304,109 @@ export function createServiceModule(deps: ServiceModuleDeps): ServiceModule {
 				message: `Doctor service unregistered (${p.manager}, ${scopePhrase(p)}). It will not start on next boot.`,
 			};
 		},
+
+		async start(): Promise<ServiceResult> {
+			let p: ServicePlan;
+			try {
+				p = plan();
+			} catch (error) {
+				return {
+					ok: false,
+					message: `Could not start the Doctor service: ${error instanceof Error ? error.message : "unknown error"}.`,
+				};
+			}
+			const { allOk, firstFailure, firstFailureResult } = await runAll(runner, startCommands(p, uid));
+			if (!allOk) {
+				const detail = describeFailure(firstFailureResult);
+				logger.warn("service.start_command_failed", { command: firstFailure?.command, detail });
+				return {
+					ok: false,
+					message: `Could not start the Doctor service (${firstFailure?.command ?? "unknown"}): ${detail}. Is it registered? Run \`doctor install-service\` first.`,
+				};
+			}
+			logger.info("service.started", { manager: p.manager, scope: p.scope });
+			return { ok: true, message: `Doctor service started (${p.manager}, ${scopePhrase(p)}).` };
+		},
+
+		async stop(): Promise<ServiceResult> {
+			let p: ServicePlan;
+			try {
+				p = plan();
+			} catch (error) {
+				return {
+					ok: false,
+					message: `Could not stop the Doctor service: ${error instanceof Error ? error.message : "unknown error"}.`,
+				};
+			}
+			const { allOk, firstFailure, firstFailureResult } = await runAll(runner, stopCommands(p, uid));
+			if (!allOk) {
+				const detail = describeFailure(firstFailureResult);
+				logger.warn("service.stop_command_failed", { command: firstFailure?.command, detail });
+				return {
+					ok: false,
+					message: `Could not stop the Doctor service (${firstFailure?.command ?? "unknown"}): ${detail}.`,
+				};
+			}
+			logger.info("service.stopped", { manager: p.manager, scope: p.scope });
+			// The unit stays REGISTERED (unlike uninstall): a crash/manual `start` brings it back.
+			return { ok: true, message: `Doctor service stopped (${p.manager}, ${scopePhrase(p)}). It remains registered.` };
+		},
 	};
+}
+
+/**
+ * Start Doctor's own service (PRD-003b b-AC-1), standalone (no install/uninstall surface),
+ * mirroring {@link serviceStatus}'s shape: a caller (the CLI's `restart` wiring, the
+ * composition root) that only needs start/stop does not have to build the full
+ * {@link createServiceModule}. Never throws; a resolution/plan failure becomes `ok:false`.
+ */
+export async function serviceStart(deps: ServiceModuleDeps): Promise<ServiceResult> {
+	const runner = deps.runner ?? createExecFileRunner();
+	const uid = deps.uid ?? liveUid();
+	const environment = deps.environment ?? resolveServiceContext(deps.execPath, deps.preferSystemScope ?? false);
+	let p: ServicePlan;
+	try {
+		p = resolveServicePlan(environment);
+	} catch (error) {
+		return {
+			ok: false,
+			message: `Could not start the Doctor service: ${error instanceof Error ? error.message : "unknown error"}.`,
+		};
+	}
+	const { allOk, firstFailure, firstFailureResult } = await runAll(runner, startCommands(p, uid));
+	if (!allOk) {
+		const detail = describeFailure(firstFailureResult);
+		return {
+			ok: false,
+			message: `Could not start the Doctor service (${firstFailure?.command ?? "unknown"}): ${detail}. Is it registered? Run \`doctor install-service\` first.`,
+		};
+	}
+	return { ok: true, message: `Doctor service started (${p.manager}, ${scopePhrase(p)}).` };
+}
+
+/**
+ * Stop Doctor's own service (PRD-003b b-AC-1), standalone; see {@link serviceStart}. Never
+ * throws. The unit stays REGISTERED (unlike uninstall's deregister-and-delete-unit-file).
+ */
+export async function serviceStop(deps: ServiceModuleDeps): Promise<ServiceResult> {
+	const runner = deps.runner ?? createExecFileRunner();
+	const uid = deps.uid ?? liveUid();
+	const environment = deps.environment ?? resolveServiceContext(deps.execPath, deps.preferSystemScope ?? false);
+	let p: ServicePlan;
+	try {
+		p = resolveServicePlan(environment);
+	} catch (error) {
+		return {
+			ok: false,
+			message: `Could not stop the Doctor service: ${error instanceof Error ? error.message : "unknown error"}.`,
+		};
+	}
+	const { allOk, firstFailure, firstFailureResult } = await runAll(runner, stopCommands(p, uid));
+	if (!allOk) {
+		const detail = describeFailure(firstFailureResult);
+		return { ok: false, message: `Could not stop the Doctor service (${firstFailure?.command ?? "unknown"}): ${detail}.` };
+	}
+	return { ok: true, message: `Doctor service stopped (${p.manager}, ${scopePhrase(p)}). It remains registered.` };
 }
 
 /**
@@ -317,6 +438,84 @@ export async function serviceStatus(deps: ServiceModuleDeps): Promise<ServiceSta
 		return /\bactive\b/.test(result.stdout) && !/inactive|failed/.test(result.stdout) ? "running" : "not-running";
 	}
 	return "running";
+}
+
+/**
+ * Best-effort deregister doctor's OWN pre-decision-#32 (legacy) unit
+ * (`com.legioncode.hivedoctor` / `hivedoctor.service` / `HiveDoctor`), mirroring the exact
+ * migration cleanup {@link createServiceModule}'s `install()` already performs at its step
+ * 0 - but callable standalone for `uninstall` (PRD-003b b-AC-2: uninstall removes the
+ * current label PLUS a best-effort legacy label, so a re-run never leaves a legacy unit
+ * still registered to start at boot). Declared SEPARATELY from
+ * {@link FullServiceModule.uninstall} (rather than folded into it) so `uninstall-service`'s
+ * existing exact-argv contract and tests are completely unaffected; the new `uninstall`
+ * verb (`cli/index.ts`) calls this FIRST, then `uninstall()`. Never throws.
+ */
+export async function deregisterLegacyUnit(deps: ServiceModuleDeps): Promise<void> {
+	const runner = deps.runner ?? createExecFileRunner();
+	const fs = deps.fs ?? createNodeServiceFs();
+	const uid = deps.uid ?? liveUid();
+	const environment = deps.environment ?? resolveServiceContext(deps.execPath, deps.preferSystemScope ?? false);
+	let p: ServicePlan;
+	try {
+		p = resolveServicePlan(environment);
+	} catch {
+		return;
+	}
+	await runAll(runner, legacyUninstallCommands(p, uid));
+	try {
+		const legacyPath = legacyUnitPath(p);
+		if (legacyPath !== "") fs.removeFile(legacyPath);
+	} catch {
+		// Best-effort cleanup only; a remove failure never blocks the rest of uninstall.
+	}
+}
+
+/**
+ * Best-effort REGISTRATION-evidence probe (PRD-003b b-AC-6 fix): is doctor's OWN unit
+ * actually registered with the OS, regardless of whether it is currently active? This is
+ * a STRONGER signal than {@link serviceStatus}'s activity check for systemd, where
+ * `systemctl is-active` fails identically for "the unit exists but is inactive" and "the
+ * unit was never registered at all" - so `serviceStatus()` alone cannot tell an
+ * installed-but-stopped unit apart from a genuinely absent one (the exact false-no-op the
+ * verifier caught: an installed-but-inactive systemd unit with no registry entry and no
+ * state dir was wrongly classified as nothing-to-remove).
+ *
+ * For the file-based managers (launchd/systemd) this checks the unit-FILE's existence at
+ * the plan's resolved `unitPath`, which `install()` writes and `uninstall()` removes,
+ * independent of the unit's runtime activity. For the Windows managers (schtasks/sc), a
+ * status query already succeeds for a registered-but-stopped task/service (schtasks
+ * `/Query` and `sc query` both succeed regardless of Ready/Running/Stopped state), so this
+ * delegates to {@link serviceStatus} for those platforms rather than duplicating its argv.
+ *
+ * Bias: resolves `true` (registered) whenever the answer is ambiguous - an unresolved
+ * plan, a filesystem read error, or a spawn error. The uninstall steps this probe gates
+ * are all individually idempotent/best-effort, so a false positive here costs nothing at
+ * most an extra no-op deregister attempt, while a false negative (a wrongly-claimed no-op)
+ * would silently leave a real unit registered forever. Never throws.
+ */
+export async function isServiceRegistered(deps: ServiceModuleDeps): Promise<boolean> {
+	const fs = deps.fs ?? createNodeServiceFs();
+	const environment = deps.environment ?? resolveServiceContext(deps.execPath, deps.preferSystemScope ?? false);
+	let p: ServicePlan;
+	try {
+		p = resolveServicePlan(environment);
+	} catch {
+		return true;
+	}
+	if (p.manager === "launchd" || p.manager === "systemd") {
+		try {
+			return fs.exists(p.unitPath);
+		} catch {
+			return true;
+		}
+	}
+	// schtasks / sc: serviceStatus()'s own "unknown" already means "ambiguous" (a spawn/ENOENT
+	// error), and its "running" already means the query succeeded (registered, regardless of
+	// activity) - only its clean "not-running" means the manager confidently reported no such
+	// task/service, i.e. genuinely unregistered.
+	const status = await serviceStatus(deps);
+	return status !== "not-running";
 }
 
 export { resolveServicePlan, resolveServiceContext } from "./platform.js";

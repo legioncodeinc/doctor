@@ -7,7 +7,14 @@
 
 import { describe, expect, it } from "vitest";
 
-import { createServiceModule, serviceStatus } from "../../src/service/index.js";
+import {
+	createServiceModule,
+	deregisterLegacyUnit,
+	isServiceRegistered,
+	serviceStart,
+	serviceStatus,
+	serviceStop,
+} from "../../src/service/index.js";
 import { SERVICE_LABEL } from "../../src/service/platform.js";
 import { createMemoryFs, createRecordingRunner, fixedEnv } from "./helpers.js";
 
@@ -252,6 +259,186 @@ describe("uninstall - deregisters then removes the unit file (AC-064b.5)", () =>
 	});
 });
 
+describe("start/stop (PRD-003b b-AC-1)", () => {
+	it("Linux: start runs systemctl --user start", async () => {
+		const runner = createRecordingRunner();
+		const module = createServiceModule({
+			execPath: "/usr/bin/doctor",
+			runner,
+			fs: createMemoryFs(),
+			environment: fixedEnv({ platform: "linux" }),
+		});
+		const result = await module.start();
+		expect(runner.calls[0]).toEqual({ command: "systemctl", args: ["--user", "start", "doctor.service"] });
+		expect(result.ok).toBe(true);
+		expect(result.message).toContain("started");
+	});
+
+	it("Linux: stop runs systemctl --user stop (the unit stays registered)", async () => {
+		const runner = createRecordingRunner();
+		const module = createServiceModule({
+			execPath: "/usr/bin/doctor",
+			runner,
+			fs: createMemoryFs(),
+			environment: fixedEnv({ platform: "linux" }),
+		});
+		const result = await module.stop();
+		expect(runner.calls[0]).toEqual({ command: "systemctl", args: ["--user", "stop", "doctor.service"] });
+		expect(result.ok).toBe(true);
+		expect(result.message).toContain("remains registered");
+	});
+
+	it("macOS: start kickstarts, stop sends SIGTERM (no bootout)", async () => {
+		const runner = createRecordingRunner();
+		const module = createServiceModule({
+			execPath: "/opt/doctor",
+			runner,
+			fs: createMemoryFs(),
+			environment: fixedEnv({ platform: "darwin", home: "/Users/t" }),
+		});
+		await module.start();
+		expect(runner.calls[0]?.args[0]).toBe("kickstart");
+		await module.stop();
+		expect(runner.calls[1]?.args).toEqual(expect.arrayContaining(["kill", "SIGTERM"]));
+	});
+
+	it("Windows: start runs /Run, stop runs /End", async () => {
+		const runner = createRecordingRunner();
+		const module = createServiceModule({
+			execPath: "C:\\bin\\doctor.cmd",
+			runner,
+			fs: createMemoryFs(),
+			environment: fixedEnv({ platform: "win32" }),
+		});
+		await module.start();
+		expect(runner.calls[0]).toEqual({ command: "schtasks", args: ["/Run", "/TN", "doctor"] });
+		await module.stop();
+		expect(runner.calls[1]).toEqual({ command: "schtasks", args: ["/End", "/TN", "doctor"] });
+	});
+
+	it("a manager-command failure on start/stop resolves ok:false, never throws", async () => {
+		const runner = createRecordingRunner(() => ({ ok: false, code: 1, stdout: "", stderr: "not found" }));
+		const module = createServiceModule({
+			execPath: "/usr/bin/doctor",
+			runner,
+			fs: createMemoryFs(),
+			environment: fixedEnv({ platform: "linux" }),
+		});
+		const startResult = await module.start();
+		expect(startResult.ok).toBe(false);
+		expect(startResult.message).toContain("not found");
+		const stopResult = await module.stop();
+		expect(stopResult.ok).toBe(false);
+		expect(stopResult.message).toContain("not found");
+	});
+
+	it("an unsupported platform returns a clean message for start/stop, never throws", async () => {
+		const module = createServiceModule({
+			execPath: "/x",
+			runner: createRecordingRunner(),
+			fs: createMemoryFs(),
+			environment: fixedEnv({ platform: "sunos" }),
+		});
+		expect((await module.start()).ok).toBe(false);
+		expect((await module.stop()).ok).toBe(false);
+	});
+});
+
+describe("standalone serviceStart/serviceStop (mirror serviceStatus's shape)", () => {
+	it("serviceStart runs the same argv as module.start() without building install/uninstall", async () => {
+		const runner = createRecordingRunner();
+		const result = await serviceStart({
+			execPath: "/usr/bin/doctor",
+			runner,
+			environment: fixedEnv({ platform: "linux" }),
+		});
+		expect(runner.calls[0]).toEqual({ command: "systemctl", args: ["--user", "start", "doctor.service"] });
+		expect(result.ok).toBe(true);
+	});
+
+	it("serviceStop runs the same argv as module.stop()", async () => {
+		const runner = createRecordingRunner();
+		const result = await serviceStop({
+			execPath: "/usr/bin/doctor",
+			runner,
+			environment: fixedEnv({ platform: "linux" }),
+		});
+		expect(runner.calls[0]).toEqual({ command: "systemctl", args: ["--user", "stop", "doctor.service"] });
+		expect(result.ok).toBe(true);
+	});
+});
+
+describe("deregisterLegacyUnit (PRD-003b b-AC-2: uninstall also clears the legacy label)", () => {
+	it("Linux: disables the legacy systemd unit and removes its unit file", async () => {
+		const runner = createRecordingRunner();
+		const fs = createMemoryFs();
+		const legacyPath = "/home/t/.config/systemd/user/hivedoctor.service";
+		fs.files.set(legacyPath, "stale legacy unit");
+		await deregisterLegacyUnit({
+			execPath: "/usr/bin/doctor",
+			runner,
+			fs,
+			environment: fixedEnv({ platform: "linux", home: "/home/t" }),
+		});
+		expect(runner.calls[0]).toEqual({
+			command: "systemctl",
+			args: ["--user", "disable", "--now", "hivedoctor.service"],
+		});
+		expect(fs.removed).toContain(legacyPath);
+	});
+
+	it("macOS: boots out the legacy launchd label and removes the legacy plist", async () => {
+		const runner = createRecordingRunner();
+		const fs = createMemoryFs();
+		const legacyPath = "/Users/t/Library/LaunchAgents/com.legioncode.hivedoctor.plist";
+		fs.files.set(legacyPath, "stale");
+		await deregisterLegacyUnit({
+			execPath: "/opt/doctor",
+			runner,
+			fs,
+			environment: fixedEnv({ platform: "darwin", home: "/Users/t" }),
+		});
+		expect(runner.calls[0]?.command).toBe("launchctl");
+		expect(runner.calls[0]?.args[0]).toBe("bootout");
+		expect(runner.calls[0]?.args[1]).toContain("com.legioncode.hivedoctor");
+		expect(fs.removed).toContain(legacyPath);
+	});
+
+	it("Windows: deletes the legacy scheduled task (no unit file to remove)", async () => {
+		const runner = createRecordingRunner();
+		await deregisterLegacyUnit({
+			execPath: "C:\\bin\\doctor.cmd",
+			runner,
+			fs: createMemoryFs(),
+			environment: fixedEnv({ platform: "win32" }),
+		});
+		expect(runner.calls[0]).toEqual({ command: "schtasks", args: ["/Delete", "/TN", "HiveDoctor", "/F"] });
+	});
+
+	it("a missing legacy unit (the common case) is tolerated - never throws", async () => {
+		const runner = createRecordingRunner(() => ({ ok: false, code: 1, stdout: "", stderr: "not loaded" }));
+		await expect(
+			deregisterLegacyUnit({
+				execPath: "/usr/bin/doctor",
+				runner,
+				fs: createMemoryFs(),
+				environment: fixedEnv({ platform: "linux" }),
+			}),
+		).resolves.toBeUndefined();
+	});
+
+	it("an unsupported platform is a silent no-op, never throws", async () => {
+		await expect(
+			deregisterLegacyUnit({
+				execPath: "/x",
+				runner: createRecordingRunner(),
+				fs: createMemoryFs(),
+				environment: fixedEnv({ platform: "sunos" }),
+			}),
+		).resolves.toBeUndefined();
+	});
+});
+
 describe("serviceStatus classification", () => {
 	it("systemd is-active 'active' -> running", async () => {
 		const runner = createRecordingRunner(() => ({ ok: true, code: 0, stdout: "active\n", stderr: "" }));
@@ -291,5 +478,117 @@ describe("serviceStatus classification", () => {
 			environment: fixedEnv({ platform: "win32" }),
 		});
 		expect(status).toBe("running");
+	});
+});
+
+describe("isServiceRegistered (PRD-003b b-AC-6 fix): registration evidence, not activity", () => {
+	it("b-AC-6: Linux - the exact verifier scenario: unit file present, service INACTIVE -> registered", async () => {
+		// systemd `is-active` fails identically for "inactive" and "never registered" (see the
+		// serviceStatus test above), so this must key off the unit FILE, not the status call.
+		const runner = createRecordingRunner(() => ({ ok: false, code: 3, stdout: "inactive\n", stderr: "" }));
+		const fs = createMemoryFs(false, ["/home/t/.config/systemd/user/doctor.service"]);
+		const registered = await isServiceRegistered({
+			execPath: "/usr/bin/doctor",
+			runner,
+			fs,
+			environment: fixedEnv({ platform: "linux", home: "/home/t" }),
+		});
+		expect(registered).toBe(true);
+	});
+
+	it("Linux: unit file absent -> not registered", async () => {
+		const runner = createRecordingRunner(() => ({ ok: false, code: 3, stdout: "inactive\n", stderr: "" }));
+		const fs = createMemoryFs();
+		const registered = await isServiceRegistered({
+			execPath: "/usr/bin/doctor",
+			runner,
+			fs,
+			environment: fixedEnv({ platform: "linux", home: "/home/t" }),
+		});
+		expect(registered).toBe(false);
+	});
+
+	it("macOS: plist present -> registered, regardless of launchctl print result", async () => {
+		const runner = createRecordingRunner(() => ({ ok: false, code: 1, stdout: "", stderr: "" }));
+		const plistPath = `/Users/t/Library/LaunchAgents/${SERVICE_LABEL}.plist`;
+		const fs = createMemoryFs(false, [plistPath]);
+		const registered = await isServiceRegistered({
+			execPath: "/opt/doctor",
+			runner,
+			fs,
+			environment: fixedEnv({ platform: "darwin", home: "/Users/t" }),
+		});
+		expect(registered).toBe(true);
+	});
+
+	it("macOS: plist absent -> not registered", async () => {
+		const runner = createRecordingRunner();
+		const registered = await isServiceRegistered({
+			execPath: "/opt/doctor",
+			runner,
+			fs: createMemoryFs(),
+			environment: fixedEnv({ platform: "darwin", home: "/Users/t" }),
+		});
+		expect(registered).toBe(false);
+	});
+
+	it("Windows schtasks: a successful /Query means registered even when the task is not running", async () => {
+		const runner = createRecordingRunner(() => ({ ok: true, code: 0, stdout: "TaskName Ready", stderr: "" }));
+		const registered = await isServiceRegistered({
+			execPath: "C:\\bin\\doctor.cmd",
+			runner,
+			fs: createMemoryFs(),
+			environment: fixedEnv({ platform: "win32" }),
+		});
+		expect(registered).toBe(true);
+	});
+
+	it("Windows schtasks: a clean 'not found' query means not registered", async () => {
+		const runner = createRecordingRunner(() => ({ ok: false, code: 1, stdout: "", stderr: "ERROR: not found" }));
+		const registered = await isServiceRegistered({
+			execPath: "C:\\bin\\doctor.cmd",
+			runner,
+			fs: createMemoryFs(),
+			environment: fixedEnv({ platform: "win32" }),
+		});
+		expect(registered).toBe(false);
+	});
+
+	it("a spawn error (ambiguous) biases toward registered=true, never a false no-op", async () => {
+		const runner = createRecordingRunner(() => ({ ok: false, code: null, stdout: "", stderr: "", detail: "ENOENT" }));
+		const registered = await isServiceRegistered({
+			execPath: "C:\\bin\\doctor.cmd",
+			runner,
+			fs: createMemoryFs(),
+			environment: fixedEnv({ platform: "win32" }),
+		});
+		expect(registered).toBe(true);
+	});
+
+	it("an unsupported platform (unresolved plan) biases toward registered=true", async () => {
+		const registered = await isServiceRegistered({
+			execPath: "/x",
+			runner: createRecordingRunner(),
+			fs: createMemoryFs(),
+			environment: fixedEnv({ platform: "sunos" }),
+		});
+		expect(registered).toBe(true);
+	});
+
+	it("a filesystem read error on the file-based managers biases toward registered=true", async () => {
+		const runner = createRecordingRunner();
+		const throwingFs = {
+			...createMemoryFs(),
+			exists(): boolean {
+				throw new Error("EACCES");
+			},
+		};
+		const registered = await isServiceRegistered({
+			execPath: "/usr/bin/doctor",
+			runner,
+			fs: throwingFs,
+			environment: fixedEnv({ platform: "linux" }),
+		});
+		expect(registered).toBe(true);
 	});
 });

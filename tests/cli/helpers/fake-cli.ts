@@ -13,6 +13,7 @@ import type {
 	CliContext,
 	CliDeps,
 	ConfirmFn,
+	ConfirmTokenFn,
 	OutputSink,
 	ServiceState,
 	StatusDaemonSource,
@@ -121,10 +122,23 @@ export interface CliHarnessOptions {
 	}[];
 	/** Whether a 064b service module is wired (default: absent). */
 	readonly serviceModule?: CliDeps["serviceModule"];
+	/** Whether the PRD-003b start/stop lifecycle seam is wired (default: absent). */
+	readonly serviceLifecycle?: CliDeps["serviceLifecycle"];
+	/** Whether the PRD-003b full `uninstall` seam is wired (default: absent). */
+	readonly productUninstall?: CliDeps["productUninstall"];
+	/** Whether the PRD-003c `purge` seam is wired (default: absent). */
+	readonly purge?: CliDeps["purge"];
 	/** The lifecycle capture-event emitter (default: absent = no lifecycle events). */
 	readonly lifecycle?: CliDeps["lifecycle"];
 	/** Force color on/off (default off, so assertions are plain text). */
 	readonly color?: boolean;
+	/**
+	 * The typed-token confirm answer for `purge` (default: `true`, i.e. the operator typed
+	 * the exact expected token). A function receives `(question, expectedToken)` for assertion.
+	 */
+	readonly confirmToken?: boolean | ConfirmTokenFn;
+	/** Whether stdin is "interactive" for `purge`'s TTY gate (default: `true`). */
+	readonly interactive?: boolean;
 }
 
 /** A built CLI harness: the context + the spies the tests assert against. */
@@ -136,6 +150,7 @@ export interface CliHarness {
 	readonly applyPrimaryUpdate: ReturnType<typeof vi.fn>;
 	readonly checkPrimaryUpdate: ReturnType<typeof vi.fn>;
 	readonly confirmSpy: ReturnType<typeof vi.fn>;
+	readonly confirmTokenSpy: ReturnType<typeof vi.fn>;
 }
 
 /** Wire a complete CLI context over fakes. */
@@ -172,6 +187,12 @@ export function buildCliHarness(options: CliHarnessOptions = {}): CliHarness {
 		return confirmAnswer;
 	});
 
+	const confirmTokenAnswer = options.confirmToken ?? true;
+	const confirmTokenSpy = vi.fn(async (question: string, expectedToken: string): Promise<boolean> => {
+		if (typeof confirmTokenAnswer === "function") return confirmTokenAnswer(question, expectedToken);
+		return confirmTokenAnswer;
+	});
+
 	const selfUpdate = vi.fn(async () => "Doctor updated (self-update ran).");
 	const applyPrimaryUpdate = vi.fn(async () => "Update updated: 1.2.3 -> 1.2.4.");
 	const checkPrimaryUpdate = vi.fn(async () => "No update: already_current.");
@@ -179,6 +200,8 @@ export function buildCliHarness(options: CliHarnessOptions = {}): CliHarness {
 	const ctx: CliContext = {
 		io: out,
 		confirm: confirmSpy,
+		confirmToken: confirmTokenSpy,
+		isInteractive: () => options.interactive ?? true,
 		colors: createColors({ env: {}, isTty: options.color ?? false }),
 		deps: {
 			probe: primaryDaemon.probe,
@@ -206,9 +229,12 @@ export function buildCliHarness(options: CliHarnessOptions = {}): CliHarness {
 				return options.incidents ?? [];
 			},
 			...(options.serviceModule !== undefined ? { serviceModule: options.serviceModule } : {}),
+			...(options.serviceLifecycle !== undefined ? { serviceLifecycle: options.serviceLifecycle } : {}),
+			...(options.productUninstall !== undefined ? { productUninstall: options.productUninstall } : {}),
+			...(options.purge !== undefined ? { purge: options.purge } : {}),
 			...(options.lifecycle !== undefined ? { lifecycle: options.lifecycle } : {}),
 		},
 	};
 
-	return { ctx, out, ladder, selfUpdate, applyPrimaryUpdate, checkPrimaryUpdate, confirmSpy };
+	return { ctx, out, ladder, selfUpdate, applyPrimaryUpdate, checkPrimaryUpdate, confirmSpy, confirmTokenSpy };
 }

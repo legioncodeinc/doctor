@@ -53,9 +53,9 @@ export interface MemoryFs extends ServiceFs {
 	readonly writes: RecordedWrite[];
 }
 
-/** Build an in-memory fs. `failWrite` makes writeFile throw (the permission-error path). */
-export function createMemoryFs(failWrite = false): MemoryFs {
-	const files = new Map<string, string>();
+/** Build an in-memory fs. `failWrite` makes writeFile throw (the permission-error path). `seed` pre-populates `exists()`. */
+export function createMemoryFs(failWrite = false, seed: readonly string[] = []): MemoryFs {
+	const files = new Map<string, string>(seed.map((path) => [path, ""]));
 	const mkdirs: string[] = [];
 	const removed: string[] = [];
 	const writes: RecordedWrite[] = [];
@@ -75,6 +75,9 @@ export function createMemoryFs(failWrite = false): MemoryFs {
 		removeFile(path: string): void {
 			files.delete(path);
 			removed.push(path);
+		},
+		exists(path: string): boolean {
+			return files.has(path);
 		},
 	};
 }
