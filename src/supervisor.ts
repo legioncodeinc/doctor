@@ -294,6 +294,42 @@ export function createSupervisor(deps: SupervisorDeps): Supervisor {
 				return classification;
 			}
 
+			// Observed recovery of REACHABILITY (the restart-loop's job): a service that was
+			// UNREACHABLE and is now merely `degraded` is answering `/health` again -- the process
+			// is back up. The restart ladder exists to get the process reachable, so once it is,
+			// the restart-failure counters + backoff rung MUST clear even though the coarse health
+			// is still `degraded`. This is essential for services doctor does NOT restart itself
+			// (`restartPolicy:"external"`, e.g. nectar): doctor's restart() is a no-op there, so
+			// its counters would otherwise stay pinned at the give-up threshold
+			// (consecutiveRestartFailures:3, backoffRung:3, lastKnownHealth:"unreachable") FOREVER
+			// after the external actor brought it back, and doctor would keep escalating a service
+			// that is actually up. nectar also boots `degraded` by design (no workspace bound yet),
+			// so `degraded` is its normal recovered state, not a fault to keep remediating. The
+			// still-degraded subsystem remediation below continues from a CLEAN rung-1 baseline.
+			if (
+				classification.kind === "degraded" &&
+				state.lastKnownHealth === "unreachable" &&
+				(state.consecutiveRestartFailures > 0 || state.backoffRung > 0 || state.currentRung !== 1)
+			) {
+				deps.logger.info("tick.reachable_again", { from: "unreachable", to: "degraded" });
+				deps.backoff.reset();
+				deps.stateStore.write({
+					...state,
+					lastKnownHealth: "degraded",
+					currentRung: 1,
+					consecutiveRestartFailures: 0,
+					backoffRung: 0,
+					lastHealAt: new Date(deps.clock.now()).toISOString(),
+				});
+				// Treat this tick as the recovery OBSERVATION and return, symmetrically with the
+				// ok-branch above: the exhausted give-up state is cleared to a clean rung-1 baseline
+				// and no remediation runs THIS tick. If the service is still genuinely degraded on
+				// the NEXT tick, remediation begins fresh from rung 1 (never re-entering the stale
+				// advanced give-up path). This is what unpins an external service (nectar) that its
+				// external supervisor already brought back: doctor stops escalating a live service.
+				return classification;
+			}
+
 			const graceRemainingMs = startupGraceRemainingMs();
 			if (graceRemainingMs > 0) {
 				deps.logger.info("tick.booting", { kind: classification.kind, remainingMs: graceRemainingMs });

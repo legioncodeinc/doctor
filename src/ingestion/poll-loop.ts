@@ -251,12 +251,33 @@ export function createPollLoop(options: PollLoopOptions): PollLoop {
 				reason,
 				detail: error instanceof Error ? error.message : "unknown",
 			});
-			// Degrade to the probe-only signal plus whatever telemetry was last known, rather
-			// than dropping the service from the model entirely -- the static entry (and its
-			// last observed state) is retained even while its DB is unavailable.
+			// A healthy `/health` probe is AUTHORITATIVE about the service's coarse liveness:
+			// when the process answers ok, an unreadable/missing telemetry DB is a TELEMETRY
+			// fault, not a service fault. Forcing `health` to "degraded" here was the live bug
+			// that made hive render a perfectly healthy service as sick just because doctor
+			// could not open its telemetry sidecar DB. So when the probe is ok, the coarse
+			// `health` reflects that ok, and the missing-telemetry condition stays visible ONLY
+			// through `telemetryFault`; metrics/deeplake are left null because we have no
+			// trustworthy telemetry to report this tick (the DB is precisely what is unreadable).
+			if (probeHealthState === "ok") {
+				return {
+					name: entry.name,
+					health: "ok",
+					lastSeen: r.lastKnownStatus?.lastSeen ?? null,
+					metrics: {},
+					deeplake: null,
+					telemetryFault: reason,
+				};
+			}
+
+			// A FAILING probe (degraded/unreachable): the service itself is unhealthy, so carry
+			// the probe signal through unchanged (never regressing the disconnect/wedged signals)
+			// and degrade to whatever telemetry was last known rather than dropping the service
+			// from the model entirely -- the static entry (and its last observed state) is
+			// retained even while its DB is unavailable.
 			return {
 				name: entry.name,
-				health: probeHealthState === "ok" ? "degraded" : probeHealthState,
+				health: probeHealthState,
 				lastSeen: r.lastKnownStatus?.lastSeen ?? null,
 				metrics: r.lastKnownMetrics,
 				deeplake:
