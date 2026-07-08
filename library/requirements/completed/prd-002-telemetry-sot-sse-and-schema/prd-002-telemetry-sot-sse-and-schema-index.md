@@ -1,6 +1,6 @@
 # PRD-002: Telemetry source-of-truth SSE stream and schema
 
-> **Status:** Backlog
+> **Status:** Completed
 > **Priority:** P0
 > **Effort:** L (1-3d)
 > **Schema changes:** Additive (defines the metrics and log SQLite tables/columns services write and doctor reads)
