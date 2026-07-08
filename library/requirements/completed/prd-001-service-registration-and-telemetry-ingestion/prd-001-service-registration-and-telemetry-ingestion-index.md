@@ -1,6 +1,6 @@
 # PRD-001: Service registration and telemetry ingestion
 
-> **Status:** Backlog
+> **Status:** Completed
 > **Priority:** P0
 > **Effort:** L (1-3d)
 > **Schema changes:** Additive (extends the static registry entry with SQLite DB path[s]; introduces a service-written runtime SQLite status contract)

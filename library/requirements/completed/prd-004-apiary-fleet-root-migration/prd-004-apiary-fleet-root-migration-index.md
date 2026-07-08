@@ -1,6 +1,6 @@
 # PRD-004: Apiary fleet-root migration (doctor's share of ADR-0003)
 
-> **Status:** Backlog
+> **Status:** Completed
 > **Priority:** P0
 > **Effort:** L (1-3d)
 > **Schema changes:** None to SQLite; on-disk layout relocation (the registry file moves; its JSON shape is unchanged)
