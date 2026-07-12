@@ -52,6 +52,14 @@ export interface DoctorConfig {
 	readonly restartCooldownMs: number;
 	/** How often the install-health telemetry snapshot is emitted, in ms (default 3600000 = 60 min, PRD-064d AC-064d.2). */
 	readonly installHealthIntervalMs: number;
+	/**
+	 * How often the supervised-daemon registry is re-read at runtime, in ms (default 2000,
+	 * PRD-005a a-AC-7). A cheap mtime `stat` on this cadence; the registry is only re-parsed
+	 * and reconciled when a file actually changed, so a post-boot registration is picked up
+	 * within one interval without a reboot. Operator-overridable via
+	 * DOCTOR_REGISTRY_RELOAD_INTERVAL_MS.
+	 */
+	readonly registryReloadIntervalMs: number;
 	/** Doctor's own workspace dir (default `<root>/doctor` under the fleet root). */
 	readonly workspaceDir: string;
 	/** The primary daemon PID/lock file Doctor respects (default `<root>/honeycomb/daemon.pid`, legacy-fallback aware). */
@@ -70,6 +78,7 @@ export interface ConfigDefaults {
 	readonly restartGiveUpThreshold: number;
 	readonly restartCooldownMs: number;
 	readonly installHealthIntervalMs: number;
+	readonly registryReloadIntervalMs: number;
 }
 
 /** The canonical Wave-0 defaults (PRD-064 / 064a). */
@@ -86,6 +95,11 @@ export const DEFAULTS: ConfigDefaults = {
 	// 60 minutes: a heartbeat coarse enough to be cheap, frequent enough to spot a box that
 	// never heals (PRD-064d AC-064d.2). Operator-overridable via DOCTOR_INSTALL_HEALTH_INTERVAL_MS.
 	installHealthIntervalMs: 3_600_000,
+	// 2 seconds: fast enough that onboarding greens within seconds of the last product
+	// registering, cheap enough to run idle for the life of the daemon (the common, unchanged
+	// tick is a single `stat`). PRD-005a a-AC-7 default. Operator-overridable via
+	// DOCTOR_REGISTRY_RELOAD_INTERVAL_MS.
+	registryReloadIntervalMs: 2_000,
 };
 
 /**
@@ -149,6 +163,7 @@ function parseHealthUrl(raw: string | undefined, fallback: string): string {
  *   - DOCTOR_RESTART_GIVE_UP
  *   - DOCTOR_RESTART_COOLDOWN_MS
  *   - DOCTOR_INSTALL_HEALTH_INTERVAL_MS
+ *   - DOCTOR_REGISTRY_RELOAD_INTERVAL_MS
  *   - DOCTOR_WORKSPACE_DIR
  *   - HONEYCOMB_DAEMON_PID_PATH
  */
@@ -184,6 +199,7 @@ export function resolveConfig(
 		restartGiveUpThreshold: parsePositiveInt(env.DOCTOR_RESTART_GIVE_UP, DEFAULTS.restartGiveUpThreshold),
 		restartCooldownMs: parseNonNegativeInt(env.DOCTOR_RESTART_COOLDOWN_MS, DEFAULTS.restartCooldownMs),
 		installHealthIntervalMs: parsePositiveInt(env.DOCTOR_INSTALL_HEALTH_INTERVAL_MS, DEFAULTS.installHealthIntervalMs),
+		registryReloadIntervalMs: parsePositiveInt(env.DOCTOR_REGISTRY_RELOAD_INTERVAL_MS, DEFAULTS.registryReloadIntervalMs),
 		workspaceDir: workspaceRaw !== undefined && workspaceRaw.trim() !== "" ? workspaceRaw.trim() : defaultWorkspace,
 		daemonPidPath: pidRaw !== undefined && pidRaw.trim() !== "" ? pidRaw.trim() : defaultPidPath,
 	};
