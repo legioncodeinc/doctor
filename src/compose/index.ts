@@ -40,6 +40,8 @@ import {
 	resolveRegistryEntries,
 	type DaemonEntry,
 } from "../registry.js";
+import { createRegistryReloadLoop, type RegistryReloadLoop } from "../registry-reload.js";
+import { reconcileSupervisors, type BuiltDaemon, type ReconcileDeps } from "../registry-reconcile.js";
 import { probeHealth } from "../health-probe.js";
 import { createPollLoop, type PollLoop } from "../ingestion/poll-loop.js";
 import { handleSseRequest } from "../ingestion/sse.js";
@@ -458,6 +460,12 @@ export interface Doctor {
 	readonly ladders: readonly RemediationLadder[];
 	/** The auto-update poll loop (exposed so the smoke test asserts opt-out wiring). */
 	readonly pollLoop: UpdatePollLoop;
+	/**
+	 * The registry live-reload loop (PRD-005a). Armed by start(), disarmed by stop(). Exposed so
+	 * a test can step exactly one reload cycle deterministically via `tick()` without waiting on
+	 * the real interval, and assert the supervised set reconciles.
+	 */
+	readonly registryReloadLoop: RegistryReloadLoop;
 	/** The status page server (exposed so the smoke test asserts it started). */
 	readonly statusPage: StatusPageServer;
 	/**
@@ -650,12 +658,8 @@ export function createDoctor(options: CreateDoctorOptions = {}): Doctor {
 	// backoff, a dedicated ladder (its restartGiveUpThreshold + the shared higher rungs), and
 	// dedicated state-<name>.json + incidents-<name>.ndjson shards (a-AC-4/5/6). N calls to the
 	// per-instance createSupervisor factory produce N fully-independent loops.
-	interface BuiltDaemon {
-		readonly entry: DaemonEntry;
-		readonly supervisor: Supervisor;
-		readonly ladder: RemediationLadder;
-		readonly stateStore: StateStore;
-	}
+	// `BuiltDaemon` is hoisted to `../registry-reconcile.js` so the reload reconciler (PRD-005b)
+	// and this factory share one type; `buildDaemon` is the SAME factory reconcile calls on an add.
 	const buildDaemon = (entry: DaemonEntry): BuiltDaemon => {
 		const entryProbe: () => ReturnType<typeof probeHealth> =
 			options.probe ?? (() => probeHealth({ healthUrl: entry.healthUrl, timeoutMs: config.probeTimeoutMs }));
@@ -711,8 +715,43 @@ export function createDoctor(options: CreateDoctorOptions = {}): Doctor {
 	// `supervisor`/`ladder`. `daemons` is non-empty (resolveDaemons guarantees it), but the
 	// `?? honeycombEntryFromConfig` keeps the primary selection total for the type checker
 	// (noUncheckedIndexedAccess) without an unsafe assertion.
-	const primary = buildDaemon(daemons[0] ?? honeycombEntryFromConfig(config));
-	const built: BuiltDaemon[] = [primary, ...daemons.slice(1).map(buildDaemon)];
+	//
+	// PRD-005b: the supervised set is a mutable, reconcilable `Map<name, BuiltDaemon>` (was a
+	// boot-time `const` array), so the registry reload reconciler can add/remove/rebuild entries
+	// at runtime and `readDaemonStatusRows` / the exposed getters reflect the live set. `primary`
+	// is a reassignable reference the reconciler re-points on a honeycomb rebuild (b-AC-6).
+	let primary = buildDaemon(daemons[0] ?? honeycombEntryFromConfig(config));
+	const builtMap = new Map<string, BuiltDaemon>();
+	builtMap.set(primary.entry.name, primary);
+	for (const entry of daemons.slice(1)) {
+		// resolveRegistryEntries already dedupes by name; skip a duplicate defensively so one
+		// name always maps to exactly one supervisor (its per-entry shard is keyed by name).
+		if (builtMap.has(entry.name)) continue;
+		builtMap.set(entry.name, buildDaemon(entry));
+	}
+
+	// Loop lifecycle bookkeeping (declared here so `armDaemon` + the reload loop below can close
+	// over them). start() arms every supervisor loop and holds the run-promises; stop() joins them.
+	let running = false;
+	let supervisorRuns: Promise<void>[] = [];
+
+	/**
+	 * Arm a supervisor that reconcile just built (PRD-005b): start its watch loop and hold the
+	 * run-promise for the lifecycle join, exactly as boot arms the initial set. When doctor is
+	 * NOT yet running, defer — the boot `start()` arms every entry currently in `builtMap`, so an
+	 * entry reconcile adds pre-start is armed there instead (no double-arm, no leak). The startup
+	 * grace is armed by the reconciler itself before this call (b-AC-1).
+	 */
+	const armDaemon = (built: BuiltDaemon): void => {
+		if (!running) return;
+		const runPromise = built.supervisor.start();
+		supervisorRuns.push(runPromise);
+		void runPromise.catch((error: unknown) => {
+			logger.error("compose.supervisor_loop_threw", {
+				reason: error instanceof Error ? error.message : "unknown",
+			});
+		});
+	};
 
 	// ── Auto-update poll loop (064e), respecting the resolved opt-out precedence ───
 	const optOut = resolveOptOut({
@@ -798,9 +837,58 @@ export function createDoctor(options: CreateDoctorOptions = {}): Doctor {
 			intervalMs: options.telemetryPollIntervalMs,
 		});
 
+	// ── Registry live-reload + supervisor reconcile (PRD-005) ─────────────────────
+	// A mtime-gated periodic re-resolve of the registry (005a) whose fresh entry list is diffed
+	// against the live `builtMap` and applied (005b): add a supervisor for a post-boot
+	// registration (the onboarding fix), drop a deregistered one, rebuild a changed one, keep an
+	// unchanged one. The primary (honeycomb) slot is never torn down on a transient omission and
+	// is re-pointed on a rebuild so the process-global surfaces never dangle (b-AC-6/b-AC-7). The
+	// telemetry poll loop's entry set is kept in lockstep via its own `reload()` (parent AC-7).
+	const reconcileDeps: ReconcileDeps = {
+		buildDaemon,
+		armDaemon,
+		logger,
+		updateTelemetryEntries: (entries) => telemetryPollLoop.reload(entries),
+		// honeycomb is the hard primary backing the status page top-level, install-health, and the
+		// auto-update re-arm; it is never dropped on a transient reload omission (b-AC-7).
+		primaryName: "honeycomb",
+		getPrimary: () => primary,
+		setPrimary: (built) => {
+			primary = built;
+		},
+	};
+	const registryReloadLoop: RegistryReloadLoop = createRegistryReloadLoop({
+		home,
+		env,
+		platform: process.platform,
+		clock,
+		logger,
+		intervalMs: config.registryReloadIntervalMs,
+		onEntries: (entries) => reconcileSupervisors(builtMap, entries, reconcileDeps),
+		// A CHANGED-but-malformed reload uses the SAME needs-attention/log path boot uses
+		// (PRD-004d fail-soft), naming the offending file; the live supervised set is preserved
+		// (005a a-AC-4). Never falls back to the honeycomb primary on reload (a-AC-6).
+		onProblem: (reason, registryPath) => {
+			logger.error("registry.reload_malformed_fallback", { registryPath, reason });
+			needsAttention.record(
+				buildEscalationRecord({
+					diagnosis: `The doctor daemon registry at ${registryPath} changed but is present-and-malformed (${reason}). doctor is preserving its current supervised set until the file is fixed; the changed registry is NOT being applied.`,
+					steps: [],
+					recommendedAction: "manual-intervention",
+					now: () => clock.now(),
+				}),
+			);
+		},
+		// A previously-malformed registry that parses again clears the needs-attention banner
+		// (005a a-AC-5): resolve() marks the current record resolved, a no-op when none exists.
+		onRecovered: () => {
+			needsAttention.resolve();
+		},
+	});
+
 	// ── Local status page (064g) on the loopback comfort port ─────────────────────
 	const readDaemonStatusRows = (): StatusJsonDaemon[] =>
-		built.map(({ entry, stateStore }) => {
+		[...builtMap.values()].map(({ entry, stateStore }) => {
 			const state = stateStore.read();
 			const escalation =
 				entry.name === "honeycomb" ? needsAttention.read() : readPerDaemonEscalation(config.workspaceDir, entry.name);
@@ -881,23 +969,33 @@ export function createDoctor(options: CreateDoctorOptions = {}): Doctor {
 	}
 
 	let uninstallCrashNet: (() => void) | null = null;
-	let running = false;
-	// One held run-promise per supervisor loop (PRD-004a): start() arms them all, stop() joins them.
-	let supervisorRuns: Promise<void>[] = [];
+	// `running` + `supervisorRuns` (the held per-supervisor run-promises) are declared above so
+	// `armDaemon` can push a reconcile-added supervisor's run-promise onto the same list.
 	let pollRun: Promise<void> | null = null;
 	let telemetryPollRun: Promise<void> | null = null;
 
 	return {
 		// The exposed supervisor/ladder are the PRIMARY honeycomb daemon's (the process-global
 		// smoke-test surface); every registered daemon's own loop is armed by start() below.
-		supervisor: primary.supervisor,
-		supervisors: built.map((b) => b.supervisor),
+		// These are GETTERS over the live `builtMap`/`primary` (PRD-005b): a reconcile that adds,
+		// drops, or rebuilds a supervisor at runtime is reflected here without re-wiring.
+		get supervisor(): Supervisor {
+			return primary.supervisor;
+		},
+		get supervisors(): readonly Supervisor[] {
+			return [...builtMap.values()].map((b) => b.supervisor);
+		},
 		pollLoop,
 		telemetryPollLoop,
+		registryReloadLoop,
 		statusPage,
 		optOut,
-		ladder: primary.ladder,
-		ladders: built.map((b) => b.ladder),
+		get ladder(): RemediationLadder {
+			return primary.ladder;
+		},
+		get ladders(): readonly RemediationLadder[] {
+			return [...builtMap.values()].map((b) => b.ladder);
+		},
 
 		async start(): Promise<void> {
 			if (running) return;
@@ -918,8 +1016,9 @@ export function createDoctor(options: CreateDoctorOptions = {}): Doctor {
 
 			// Arm the loops. Each loop's start() resolves only when stopped, so do NOT await them
 			// here - hold the promises and let stop() resolve them. A disabled poll loop is a no-op.
-			// One supervisor loop per registered daemon (PRD-004a a-AC-1).
-			supervisorRuns = built.map((b) => b.supervisor.start());
+			// One supervisor loop per registered daemon (PRD-004a a-AC-1); a reconcile-added
+			// supervisor after this point is armed + held by `armDaemon` onto this same list.
+			supervisorRuns = [...builtMap.values()].map((b) => b.supervisor.start());
 			pollRun = pollLoop.start();
 			// Arm the telemetry poll-and-merge loop (PRD-001c): about once per second, feeds
 			// the `/events` SSE stream (PRD-002a) wired onto the status page above.
@@ -928,6 +1027,10 @@ export function createDoctor(options: CreateDoctorOptions = {}): Doctor {
 			// interval. Held like the other loops; stop() disarms it. Fail-soft per emit.
 			installHealthStopped = false;
 			installHealthRun = runInstallHealthLoop();
+			// Arm the registry live-reload loop (PRD-005a): mtime-gated, it re-resolves the
+			// registry on the interval and reconciles the supervised set (005b) so a post-boot
+			// registration is adopted without a reboot. Idempotent + fail-soft; stop() disarms it.
+			registryReloadLoop.arm();
 			// Surface (but never rethrow) a loop that rejected unexpectedly.
 			for (const run of supervisorRuns) {
 				void run.catch((error: unknown) => {
@@ -957,8 +1060,12 @@ export function createDoctor(options: CreateDoctorOptions = {}): Doctor {
 			if (!running) return;
 			running = false;
 			logger.info("compose.stop");
-			// Disarm every registered daemon's supervisor loop (PRD-004a).
-			for (const b of built) b.supervisor.stop();
+			// Disarm the registry live-reload loop first (PRD-005a) so no reconcile can arm a new
+			// supervisor while we are tearing the set down.
+			registryReloadLoop.stop();
+			// Disarm every registered daemon's supervisor loop (PRD-004a), including any that
+			// reconcile added at runtime (they live in the same `builtMap`).
+			for (const b of builtMap.values()) b.supervisor.stop();
 			pollLoop.stop();
 			telemetryPollLoop.stop();
 			// Release every open read-only SQLite handle (PRD-001c): a stopped watchdog must
