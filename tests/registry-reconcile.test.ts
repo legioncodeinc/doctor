@@ -269,4 +269,46 @@ describe("reconcileSupervisors (PRD-005b)", () => {
 		expect(h.current.has("honeycomb")).toBe(true);
 		expect(h.current.has("nectar")).toBe(true);
 	});
+	it("b-AC-10: a throwing buildDaemon on an UPDATE builds BEFORE stopping — the old supervisor is kept, never stopped (CodeRabbit review)", () => {
+		const failSet = new Set<string>();
+		const h = setup([entry("honeycomb"), entry("hive")], { failBuildFor: failSet });
+		const oldHive = h.current.get("hive")!;
+		const oldHiveCalls = h.callsFor("hive");
+		// From here on, rebuilding hive throws — so the UPDATE below hits the build failure.
+		failSet.add("hive");
+
+		// A CHANGED hive entry (different healthUrl) => UPDATE path => buildDaemon("hive") throws.
+		expect(() =>
+			reconcileSupervisors(
+				h.current,
+				[entry("honeycomb"), entry("hive", { healthUrl: "http://127.0.0.1:9999/health" })],
+				h.deps,
+			),
+		).not.toThrow();
+
+		// Build-before-stop: the failed rebuild leaves the OLD hive supervisor running (never
+		// stopped) and still in the map — no dead-but-referenced daemon.
+		expect(oldHiveCalls.stop).toBe(0);
+		expect(h.current.get("hive")).toBe(oldHive);
+	});
+	it("b-AC-10 / b-AC-6: a throwing buildDaemon on the PRIMARY update keeps the old primary (never a dangling stopped ref)", () => {
+		const failSet = new Set<string>();
+		const h = setup([entry("honeycomb"), entry("nectar")], { failBuildFor: failSet });
+		const oldPrimary = h.getPrimary();
+		const oldPrimaryCalls = h.callsFor("honeycomb");
+		failSet.add("honeycomb");
+
+		expect(() =>
+			reconcileSupervisors(
+				h.current,
+				[entry("honeycomb", { healthUrl: "http://127.0.0.1:9999/health" }), entry("nectar")],
+				h.deps,
+			),
+		).not.toThrow();
+
+		// The old primary supervisor is untouched: not stopped, still the primary, still in the map.
+		expect(oldPrimaryCalls.stop).toBe(0);
+		expect(h.getPrimary()).toBe(oldPrimary);
+		expect(h.current.get("honeycomb")).toBe(oldPrimary);
+	});
 });

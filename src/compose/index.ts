@@ -746,11 +746,20 @@ export function createDoctor(options: CreateDoctorOptions = {}): Doctor {
 		if (!running) return;
 		const runPromise = built.supervisor.start();
 		supervisorRuns.push(runPromise);
-		void runPromise.catch((error: unknown) => {
-			logger.error("compose.supervisor_loop_threw", {
-				reason: error instanceof Error ? error.message : "unknown",
+		void runPromise
+			.catch((error: unknown) => {
+				logger.error("compose.supervisor_loop_threw", {
+					reason: error instanceof Error ? error.message : "unknown",
+				});
+			})
+			.finally(() => {
+				// Bound `supervisorRuns` under sustained runtime add/remove reload churn (PRD-005
+				// review): drop this run-promise once it settles so the join list never accumulates
+				// settled references. stop()'s Promise.allSettled snapshots the array before this
+				// splice can run, so removal here is safe; the boot set is re-seeded in start().
+				const index = supervisorRuns.indexOf(runPromise);
+				if (index >= 0) supervisorRuns.splice(index, 1);
 			});
-		});
 	};
 
 	// ── Auto-update poll loop (064e), respecting the resolved opt-out precedence ───

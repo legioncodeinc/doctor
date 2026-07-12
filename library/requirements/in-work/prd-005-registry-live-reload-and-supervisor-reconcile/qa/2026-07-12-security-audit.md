@@ -66,10 +66,16 @@ Registry entries carry a name, a loopback URL, and filesystem paths — **no sec
 |---|----------|-----------|----------|--------|
 | 1 | Low | `src/registry.ts:226-229` (`coercePidPath`) | `pidPath` lacks the `assertWithinBase` containment that `telemetryDbPath` has, so a poisoned registry can point it at any absolute path; `defaultReadDaemonPid` (`src/compose/index.ts:131-139`) `readFileSync`s it. **Impact is bounded to an integer/`null` oracle** — the raw content is never reflected (only a parsed positive-integer PID reaches a debug log) and the value is never passed to a signal (`process.kill` appears nowhere). Pre-existing at boot; reload gives it post-boot reachability at **parity** with boot (boot does not reject it either), so it is **not a reload regression**. | Documented — recommend follow-up |
 | 2 | Low | `src/registry.ts:379-387` (`readRegistryFile`) | No upper bound on the `daemons` array length; each entry yields one supervisor loop + ladder + telemetry handle. A local actor who can write the registry can force N supervisors. Pre-existing at boot; reload makes it re-triggerable without a reboot. Each entry's fields are still coerced to safe values, and registry-write already requires local FS privilege. | Documented — recommend a sanity cap |
-| 3 | Low | `src/compose/index.ts:696-706` (`armDaemon`) | Under sustained add/remove reload churn, `supervisorRuns` accumulates settled (resolved) run-promises — they are pushed on each add but never spliced on removal (only re-seeded in `start()`). Unbounded growth of tiny settled-promise references; negligible memory at the 2 s interval; correctness/hygiene rather than a practical DoS. | Documented |
+| 3 | Low | `src/compose/index.ts:696-706` (`armDaemon`) | Under sustained add/remove reload churn, `supervisorRuns` accumulates settled (resolved) run-promises — they are pushed on each add but never spliced on removal (only re-seeded in `start()`). Unbounded growth of tiny settled-promise references; negligible memory at the 2 s interval; correctness/hygiene rather than a practical DoS. **PR-introduced** (`armDaemon` is new in this PR). | **Fixed in this PR** — self-splice on settle |
 | 4 | Info | `src/compose/index.ts:872-874` vs `:310-312` | The reload loop always watches the two-location default+legacy paths and ignores an injected `options.registryPath` single-file override, whereas boot honors it. A test/operator-override-seam inconsistency (functional, not security). Flag for `quality-worker-bee`. | Documented |
 
-**Remediation performed:** none required (no Critical/High). One **test-only** hardening added (see below); no runtime code was modified. Findings 1–3 are all pre-existing, bounded, and gated behind local-filesystem write privilege; a containment fix for #1 and a cap for #2 touch the shared boot parse path (wider blast radius than the PRD-005 diff) and are recommended as a scoped follow-up rather than folded into this review.
+**Remediation performed:** no Critical/High. Scope + disposition are per-finding, not blanket:
+
+- **Finding 3 (Low, `armDaemon`) is PR-introduced** — `armDaemon` and runtime reconcile churn are new in this PR — and has been **remediated in this PR**: the run-promise now self-splices from `supervisorRuns` on settle (`.finally`), so the join list cannot grow unbounded under add/remove churn.
+- **Findings 1–2 (Low) are pre-existing at boot** and bounded behind local-filesystem write privilege; reload reaches them only at parity with boot. A containment fix for #1 (`coercePidPath`) and a cap for #2 (`daemons.length`) touch the shared boot parse path (wider blast radius than the PRD-005 diff) and are recommended as a scoped follow-up rather than folded into this review.
+- **Finding 4 (Info)** is a functional test-seam note handed to `quality-worker-bee`, which judged it acceptable (the reload signature is mandated by a-AC-3; production never injects `registryPath`).
+
+Also applied following the CodeRabbit review: the UPDATE path in `registry-reconcile.ts` now **builds the replacement before stopping the old supervisor**, so a throwing `buildDaemon` leaves the current (still-running) supervisor and the primary reference intact instead of stranding a stopped-but-referenced daemon (b-AC-10 strengthened; two regression tests added).
 
 ---
 
@@ -91,20 +97,20 @@ Registry entries carry a name, a loopback URL, and filesystem paths — **no sec
 
 ## Verification
 
-```
-npm run ci      → typecheck PASS; vitest 69 files / 832 tests PASS (was 831; +1 security regression test)
+```text
+npm run ci      → typecheck PASS; vitest 69 files / 834 tests PASS
 package.json    → "dependencies": {}   (unchanged)
-git diff HEAD   → src/compose/index.ts, src/config.ts   (PRD-005 author's changes; NOT modified by this audit)
-new (untracked) → tests/registry-reload.test.ts   (my only change: test-only, +1 regression test, zero runtime-code delta)
+audit change    → tests/registry-reload.test.ts  (the audit's own change: test-only reload input-coercion regression, zero runtime-code delta)
+review changes  → src/registry-reconcile.ts + src/compose/index.ts (Low-3 self-splice + build-before-stop) with tests/registry-reconcile.test.ts (+2 regressions), applied post-audit per CodeRabbit review
 ```
 
 ## Recommended follow-ups (out of scope for this review's minimal diff)
 
 1. **Low-1** — apply `assertWithinBase`-style containment to `coercePidPath` (bind to `<root>/<name>` + legacy honeycomb window root), mirroring `coerceTelemetryDbPath`, so `pidPath` cannot name an arbitrary file even as an integer oracle. Touches the boot parse path; needs its own test for the legacy-fallback pid case.
 2. **Low-2** — add a sanity cap on `daemons.length` in `readRegistryFile` (e.g. reject / truncate beyond a generous ceiling) to bound supervisor fan-out from a pathological registry.
-3. **Low-3** — splice settled promises out of `supervisorRuns` on removal (or store run-promises on the `BuiltDaemon` and rebuild the join list from `builtMap` in `stop()`), eliminating the unbounded-growth under churn.
-4. **Info** — reconcile the reload-loop path source with boot's `options.registryPath` override so an operator single-file override is watched by reload too (hand to `quality-worker-bee`).
+3. **Low-3** — ✅ **DONE in this PR**: settled run-promises now self-splice out of `supervisorRuns` on settle (`.finally` in `armDaemon`), eliminating the unbounded growth under churn.
+4. **Info** — reconcile the reload-loop path source with boot's `options.registryPath` override so an operator single-file override is watched by reload too (assessed by `quality-worker-bee` as acceptable: the reload signature is mandated by a-AC-3 and production never injects `registryPath`).
 
 ## Ordering note
 
-No `*-qa-report.md` for this branch was found under `library/` — `quality-worker-bee` has **not** run for PRD-005. Ordering is correct (security before quality). Proceed to `quality-worker-bee` after this audit.
+Security review ran **before** quality review, as required. The subsequent quality pass is recorded in `qa/2026-07-12-qa-report.md` (final QA: PASS, all 28 ACs VERIFIED).

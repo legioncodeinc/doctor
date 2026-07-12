@@ -179,11 +179,26 @@ export function reconcileSupervisors(
 			continue;
 		}
 
-		// UPDATE (b-AC-6/b-AC-9): rebuild ONLY this supervisor (stop old -> buildDaemon(new) ->
-		// arm). The per-entry `state-<name>.json` shard persists (buildDaemon reads it by name),
-		// so no remediation history or boot-grace accounting is lost; every other supervisor is
-		// untouched. The two try blocks isolate the stop from the rebuild so a stop fault does
-		// not skip the rebuild (b-AC-10).
+		// UPDATE (b-AC-6/b-AC-9): rebuild ONLY this supervisor. Build the replacement FIRST, and
+		// stop + swap the old one ONLY after the new one is ready (CodeRabbit review): if
+		// `buildDaemon` throws, the CURRENT (still-running) supervisor and the primary reference
+		// are left intact rather than being stopped with no replacement to swap in — no
+		// dead-but-referenced daemon (b-AC-10). The per-entry `state-<name>.json` shard persists
+		// across the rebuild (buildDaemon reads it by name), so no remediation history or
+		// boot-grace accounting is lost; every other supervisor is untouched.
+		let rebuilt: BuiltDaemon;
+		try {
+			rebuilt = deps.buildDaemon(entry);
+		} catch (error) {
+			// Build failed: leave the existing active supervisor + primary reference unchanged.
+			deps.logger.warn("registry.reconcile_rebuild_threw", {
+				daemon: entry.name,
+				reason: error instanceof Error ? error.message : "unknown",
+			});
+			continue;
+		}
+		// The replacement is ready. Stop the old supervisor in its own try so a stop fault does not
+		// strand the built replacement unswapped (b-AC-10).
 		try {
 			existing.supervisor.stop();
 		} catch (error) {
@@ -193,7 +208,6 @@ export function reconcileSupervisors(
 			});
 		}
 		try {
-			const rebuilt = deps.buildDaemon(entry);
 			rebuilt.supervisor.armStartupGrace();
 			deps.armDaemon(rebuilt);
 			current.set(entry.name, rebuilt);
@@ -204,7 +218,7 @@ export function reconcileSupervisors(
 				deps.setPrimary(rebuilt);
 			}
 		} catch (error) {
-			deps.logger.warn("registry.reconcile_rebuild_threw", {
+			deps.logger.warn("registry.reconcile_swap_threw", {
 				daemon: entry.name,
 				reason: error instanceof Error ? error.message : "unknown",
 			});
