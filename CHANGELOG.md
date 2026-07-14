@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.6.0 — 2026-07-14
+
+Doctor's CLI now standardizes on the Apiary command contract: canonical `service-install`/`service-uninstall`, a new `logs`/`telemetry` surface, stable JSON output, and a verified `update` command with health-checked rollback, while keeping the previous commands available as deprecated aliases.
+
 ## Unreleased
 
 - Standardize Doctor on the Apiary CLI contract: canonical `service-install` / `service-uninstall`, stable JSON envelopes, grouped Doctor branding, service-isolated `logs`, read-only `telemetry`, and shared exit codes.
