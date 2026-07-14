@@ -20,7 +20,6 @@ import { join } from "node:path";
 
 import { runApiaryMigrations } from "../apiary-migration.js";
 import { legacyHoneycombRoot } from "../apiary-root.js";
-import { createDoctor } from "../compose/index.js";
 import { resolveConfig } from "../config.js";
 import { resolveDeviceId } from "../device-id.js";
 import { probeHealth } from "../health-probe.js";
@@ -47,6 +46,7 @@ import { readProductUninstallState, removeProductState } from "../product-uninst
 import { createPurgeEngine } from "../purge/engine.js";
 import { createStateStore } from "../state.js";
 import { createLifecycleTelemetry } from "../telemetry/capture.js";
+import { isOptedOut } from "../telemetry/emit.js";
 import {
 	createInstalledPackageVersionReader,
 	createRegistryLatestReader,
@@ -60,8 +60,9 @@ import { readDaemonVersion } from "./daemon-version.js";
 import { dispatch } from "./dispatch.js";
 import { createIncidentsTail } from "./incidents-tail.js";
 import { resolveOptOut } from "./opt-out.js";
-import { createSelfUpdate } from "./self-update.js";
+import { createSelfUpdate, parseApprovedVersion } from "./self-update.js";
 import { createUpdateActions } from "./update-actions.js";
+import { appendDoctorServiceLog, captureDoctorServiceOutput, doctorServiceLogPath, tailDoctorServiceLog } from "./service-logs.js";
 import type { CliContext, ConfirmFn, ConfirmTokenFn, OutputSink } from "./context.js";
 import type { HealthClassification } from "../health-probe.js";
 import type { RungContext } from "../remediation.js";
@@ -118,7 +119,9 @@ export function buildCliContext(argv: readonly string[]): CliContext {
 	const env = process.env;
 	const config = resolveConfig(env);
 	const logger = createLogger({ level: "warn" }); // The CLI is quiet unless something is wrong.
-	const colors = createColors();
+	const colors = createColors({
+		env: hasFlag(parseArgs(argv), "no-color") ? { ...env, NO_COLOR: "1" } : env,
+	});
 	const runner = createExecFileRunner();
 	const home = homedir();
 	// PRD-004b: read the registry NEW-first with the legacy-additive merge (read-only; the
@@ -147,6 +150,7 @@ export function buildCliContext(argv: readonly string[]): CliContext {
 		healthUrl: config.healthUrl,
 		stateStore: createStateStore({ workspaceDir: config.workspaceDir, name: "honeycomb", logger }),
 	};
+	const doctorStateStore = createStateStore({ workspaceDir: config.workspaceDir, logger });
 
 	const statusDaemons = () =>
 		daemonStateStores.map((daemon) => ({
@@ -243,7 +247,7 @@ export function buildCliContext(argv: readonly string[]): CliContext {
 	// fallback) with the resolved device id as fallback.
 	// Every method is gated (empty key / DO_NOT_TRACK / HONEYCOMB_TELEMETRY=0) + fail-soft.
 	const lifecycle = createLifecycleTelemetry({
-		stateStore: createStateStore({ workspaceDir: config.workspaceDir, logger }),
+		stateStore: doctorStateStore,
 		distinctId: { deviceId },
 	});
 
@@ -269,7 +273,24 @@ export function buildCliContext(argv: readonly string[]): CliContext {
 		logger,
 	});
 
-	const selfUpdate = createSelfUpdate({ runner, logger });
+	const selfUpdate = createSelfUpdate({
+		runner,
+		logger,
+		restartService: async () => {
+			await serviceStop(serviceDeps);
+			return (await serviceStart(serviceDeps)).ok;
+		},
+		verifyHealthy: async () => (await serviceStatus(serviceDeps)) === "running",
+	});
+	const checkSelfUpdate = async (): Promise<string> => {
+		const result = await runner.run("npm", ["view", "@legioncodeinc/doctor", "version", "--json"], { timeoutMs: 15_000 });
+		if (!result.ok) return `Unable to resolve Doctor's approved release: ${result.detail ?? "npm query failed"}.`;
+		const target = parseApprovedVersion(result.stdout);
+		if (target === null) return "Unable to resolve Doctor's approved release: invalid registry metadata.";
+		return target === DOCTOR_VERSION
+			? `Doctor is up to date (${DOCTOR_VERSION}).`
+			: `Doctor update available: ${DOCTOR_VERSION} -> ${target}.`;
+	};
 
 	// The real 064b OS-service module (install/uninstall/start/stop), built once and shared
 	// by every seam below (`serviceModule`, `serviceLifecycle`, `productUninstall`, `purge`).
@@ -334,11 +355,28 @@ export function buildCliContext(argv: readonly string[]): CliContext {
 			optOut,
 			// `update --check` previews via previewUpdate() (READ-ONLY, never mutates); `update`
 			// applies via runUpdateTransaction(); `self-update` is the sole own-package path.
-			update: createUpdateActions(updateEngine, selfUpdate),
+			update: { ...createUpdateActions(updateEngine, selfUpdate), checkSelfUpdate },
 			tailIncidents: createIncidentsTail(
 				config.workspaceDir,
 				daemonEntries.map((entry) => entry.name),
 			),
+			tailServiceLogs: (args, write, signal) =>
+				tailDoctorServiceLog({ argv: args, workspaceDir: config.workspaceDir, write, ...(signal === undefined ? {} : { signal }) }),
+			paths: { config: config.workspaceDir, logs: doctorServiceLogPath(config.workspaceDir) },
+			telemetrySummary: () => {
+				const disabled = isOptedOut(env);
+				const controllingSetting = env["DO_NOT_TRACK"] !== undefined
+						? "DO_NOT_TRACK"
+						: env["HONEYCOMB_TELEMETRY"] === "0"
+							? "HONEYCOMB_TELEMETRY"
+							: "default";
+				return {
+					state: disabled ? "opted-out" : "enabled",
+					controllingSetting,
+					destination: disabled ? "disabled" : "hosted",
+					optOutInstruction: "Set DO_NOT_TRACK=1 or HONEYCOMB_TELEMETRY=0",
+				};
+			},
 		},
 	};
 }
@@ -352,30 +390,49 @@ export function buildCliContext(argv: readonly string[]): CliContext {
  */
 async function runWatchdog(argv: readonly string[]): Promise<number> {
 	const cliNoAutoUpdate = hasFlag(parseArgs(argv), "no-auto-update");
-	// PRD-004 (ADR-0003): run the one-time, idempotent, best-effort state migrations on boot
-	// BEFORE assembling the watchdog: doctor's own workspace (004a) and the fleet-shared
-	// registry (004b) move from the legacy `~/.honeycomb` root to the neutral `~/.apiary` root.
-	// runApiaryMigrations is TOTAL (never throws), so a migration hiccup can never block boot;
-	// readers fall back to the legacy location until the new path exists. The workspace leg is
-	// skipped (and logged) when DOCTOR_WORKSPACE_DIR pins the workspace explicitly.
-	runApiaryMigrations({ logger: createLogger({ level: "info" }) });
-	const doctor = createDoctor({ cliNoAutoUpdate });
-	await doctor.start();
-	// Keep `run` alive even when optional referenced handles (notably the status page)
-	// fail to bind and all internal loop timers are deliberately unref'ed.
-	const keepAlive = setInterval(() => undefined, 60 * 60 * 1000);
+	// Arm termination before the first asynchronous startup step. A service manager may
+	// request shutdown while migrations, the dynamic compose import, or doctor.start() is
+	// still in flight; registering later loses that signal and leaves the watchdog alive.
+	let resolveTermination: (() => void) | undefined;
+	const termination = new Promise<void>((resolve) => {
+		resolveTermination = resolve;
+	});
+	const stop = (): void => resolveTermination?.();
+	process.once("SIGTERM", stop);
+	process.once("SIGINT", stop);
 	try {
-		// Block until a termination signal arrives; the service manager owns the lifecycle.
-		await new Promise<void>((resolve) => {
-			const stop = (): void => resolve();
-			process.once("SIGTERM", stop);
-			process.once("SIGINT", stop);
-		});
+		// PRD-004 (ADR-0003): run the one-time, idempotent, best-effort state migrations on boot
+		// BEFORE assembling the watchdog: doctor's own workspace (004a) and the fleet-shared
+		// registry (004b) move from the legacy `~/.honeycomb` root to the neutral `~/.apiary` root.
+		// runApiaryMigrations is TOTAL (never throws), so a migration hiccup can never block boot;
+		// readers fall back to the legacy location until the new path exists. The workspace leg is
+		// skipped (and logged) when DOCTOR_WORKSPACE_DIR pins the workspace explicitly.
+		runApiaryMigrations({ logger: createLogger({ level: "info" }) });
+		const config = resolveConfig(process.env);
+		await appendDoctorServiceLog(config.workspaceDir, "Doctor service starting");
+		const restoreServiceOutput = captureDoctorServiceOutput(config.workspaceDir);
+		// Keep the watchdog assembly (and its experimental node:sqlite reader) off every
+		// one-shot CLI path. JSON commands must emit exactly one document with no runtime warning.
+		const { createDoctor } = await import("../compose/index.js");
+		const doctor = createDoctor({ cliNoAutoUpdate });
+		await doctor.start();
+		// Keep `run` alive even when optional referenced handles (notably the status page)
+		// fail to bind and all internal loop timers are deliberately unref'ed.
+		const keepAlive = setInterval(() => undefined, 60 * 60 * 1000);
+		try {
+			// Block until a termination signal arrives; the service manager owns the lifecycle.
+			await termination;
+		} finally {
+			clearInterval(keepAlive);
+			await doctor.stop();
+			await appendDoctorServiceLog(config.workspaceDir, "Doctor service stopped");
+			restoreServiceOutput();
+		}
+		return 0;
 	} finally {
-		clearInterval(keepAlive);
-		await doctor.stop();
+		process.removeListener("SIGTERM", stop);
+		process.removeListener("SIGINT", stop);
 	}
-	return 0;
 }
 
 /** Run the CLI: build the context, dispatch, resolve the exit code. Never throws. */

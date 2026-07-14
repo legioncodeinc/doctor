@@ -101,9 +101,9 @@ export function renderLaunchdPlist(plan: ServicePlan): string {
 	<key>ProcessType</key>
 	<string>Background</string>
 	<key>StandardOutPath</key>
-	<string>${stateDir}/launchd.out.log</string>
+	<string>${stateDir}/service.log</string>
 	<key>StandardErrorPath</key>
-	<string>${stateDir}/launchd.err.log</string>
+	<string>${stateDir}/service.log</string>
 </dict>
 </plist>
 `;
@@ -130,6 +130,8 @@ ExecStart=${exec}
 Restart=always
 RestartSec=${RESTART_SEC}
 StartLimitIntervalSec=0
+StandardOutput=append:${plan.stateDir}/service.log
+StandardError=append:${plan.stateDir}/service.log
 
 [Install]
 WantedBy=default.target

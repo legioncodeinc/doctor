@@ -258,10 +258,10 @@ describe("createDoctor registry live-reload + reconcile (PRD-005)", () => {
 		}
 	});
 
-	it("AC-9: doctor ships with no external runtime dependency", () => {
+	it("PRD-003: doctor ships only with the shared zero-dependency CLI contract", () => {
 		const pkg = JSON.parse(
 			readFileSync(join(import.meta.dirname, "..", "..", "package.json"), "utf8"),
 		) as { dependencies?: Record<string, string> };
-		expect(pkg.dependencies ?? {}).toEqual({});
+		expect(pkg.dependencies ?? {}).toEqual({ "@legioncodeinc/cli-kit": "^0.3.0" });
 	});
 });

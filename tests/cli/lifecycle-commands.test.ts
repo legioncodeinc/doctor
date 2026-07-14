@@ -15,7 +15,7 @@ import { buildCliHarness } from "./helpers/fake-cli.js";
 describe("start (PRD-003b b-AC-1)", () => {
 	it("delegates to serviceLifecycle.start() and prints its message", async () => {
 		const start = vi.fn(async () => ({ ok: true, message: "Doctor service started (systemd, user scope)." }));
-		const { ctx, out } = buildCliHarness({ serviceLifecycle: { start, stop: vi.fn() } });
+		const { ctx, out } = buildCliHarness({ serviceLifecycle: { start, stop: vi.fn() }, serviceStateAsync: async () => "running" });
 		const code = await dispatch(["start"], ctx);
 		expect(code).toBe(EXIT_OK);
 		expect(start).toHaveBeenCalledTimes(1);
@@ -29,18 +29,18 @@ describe("start (PRD-003b b-AC-1)", () => {
 		expect(code).toBe(EXIT_ERROR);
 	});
 
-	it("prints the 'not yet available' stub when serviceLifecycle is not wired", async () => {
+	it("fails closed when serviceLifecycle is not wired", async () => {
 		const { ctx, out } = buildCliHarness();
 		const code = await dispatch(["start"], ctx);
-		expect(code).toBe(EXIT_OK);
-		expect(out.text()).toContain(SERVICE_NOT_AVAILABLE);
+		expect(code).toBe(EXIT_ERROR);
+		expect(out.errText()).toContain(SERVICE_NOT_AVAILABLE);
 	});
 });
 
 describe("stop (PRD-003b b-AC-1)", () => {
 	it("delegates to serviceLifecycle.stop() and prints its message", async () => {
 		const stop = vi.fn(async () => ({ ok: true, message: "Doctor service stopped (systemd, user scope)." }));
-		const { ctx, out } = buildCliHarness({ serviceLifecycle: { start: vi.fn(), stop } });
+		const { ctx, out } = buildCliHarness({ serviceLifecycle: { start: vi.fn(), stop }, serviceStateAsync: async () => "not-running" });
 		const code = await dispatch(["stop"], ctx);
 		expect(code).toBe(EXIT_OK);
 		expect(stop).toHaveBeenCalledTimes(1);
@@ -54,11 +54,26 @@ describe("stop (PRD-003b b-AC-1)", () => {
 		expect(code).toBe(EXIT_ERROR);
 	});
 
-	it("prints the 'not yet available' stub when serviceLifecycle is not wired", async () => {
+	it("polls until stopped and fails after the bounded verification window", async () => {
+		const stop = vi.fn(async () => ({ ok: true, message: "stop command accepted" }));
+		const transitions: Array<"running" | "not-running"> = ["running", "running", "not-running"];
+		const state = vi.fn(async () => transitions.shift() ?? "not-running");
+		const success = buildCliHarness({ serviceLifecycle: { start: vi.fn(), stop }, serviceStateAsync: state });
+		expect(await dispatch(["stop"], success.ctx)).toBe(EXIT_OK);
+		expect(state).toHaveBeenCalledTimes(3);
+
+		const stillRunning = vi.fn(async () => "running" as const);
+		const timeout = buildCliHarness({ serviceLifecycle: { start: vi.fn(), stop }, serviceStateAsync: stillRunning });
+		expect(await dispatch(["stop"], timeout.ctx)).toBe(EXIT_ERROR);
+		expect(stillRunning).toHaveBeenCalledTimes(20);
+		expect(timeout.out.errText()).toContain("did not reach stopped state");
+	});
+
+	it("fails closed when serviceLifecycle is not wired", async () => {
 		const { ctx, out } = buildCliHarness();
 		const code = await dispatch(["stop"], ctx);
-		expect(code).toBe(EXIT_OK);
-		expect(out.text()).toContain(SERVICE_NOT_AVAILABLE);
+		expect(code).toBe(EXIT_ERROR);
+		expect(out.errText()).toContain(SERVICE_NOT_AVAILABLE);
 	});
 });
 
@@ -283,11 +298,11 @@ describe("uninstall (PRD-003b b-AC-2/3/4/6/7)", () => {
 		expect(uninstalled).not.toHaveBeenCalled();
 	});
 
-	it("prints the 'not yet available' stub when productUninstall is not wired", async () => {
+	it("fails closed when productUninstall is not wired", async () => {
 		const { ctx, out } = buildCliHarness();
 		const code = await dispatch(["uninstall"], ctx);
-		expect(code).toBe(EXIT_OK);
-		expect(out.text()).toContain(SERVICE_NOT_AVAILABLE);
+		expect(code).toBe(EXIT_ERROR);
+		expect(out.errText()).toContain(SERVICE_NOT_AVAILABLE);
 	});
 });
 

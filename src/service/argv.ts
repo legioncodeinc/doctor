@@ -41,6 +41,51 @@ export interface ServiceCommand {
 	readonly args: readonly string[];
 }
 
+/** Fixed PowerShell host used only for the Windows Scheduled Task descendant cleanup. */
+export const WINDOWS_POWERSHELL_PATH =
+	"C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" as const;
+
+/**
+ * Task Scheduler can end the `conhost --headless` action while leaving its Node child alive.
+ * This fixed script receives the trusted Doctor bundle path and Node executable as separate argv
+ * values, then terminates only an exact `node <doctor-cli> run` identity. No value is interpolated
+ * into the script and the command is executed through execFile, not a shell string.
+ */
+export const WINDOWS_DOCTOR_PROCESS_CLEANUP_SCRIPT =
+	"& { param([string]$cli64,[string]$node64); " +
+	"$ErrorActionPreference='Stop'; " +
+	"$cli=[IO.Path]::GetFullPath([Text.Encoding]::Unicode.GetString([Convert]::FromBase64String($cli64))); " +
+	"$node=[IO.Path]::GetFullPath([Text.Encoding]::Unicode.GetString([Convert]::FromBase64String($node64))); " +
+	"Get-CimInstance Win32_Process | Where-Object { " +
+	"$_.Name -ieq 'node.exe' -and $_.CommandLine -and $_.ExecutablePath -and " +
+	"[IO.Path]::GetFullPath($_.ExecutablePath) -ieq $node -and " +
+	"$_.CommandLine.IndexOf($cli,[StringComparison]::OrdinalIgnoreCase) -ge 0 -and " +
+	"$_.CommandLine -match '\\srun(?:\\s|$)' " +
+	"} | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction Stop } }";
+
+/** Encode a path as UTF-16LE/base64 so PowerShell's `-Command` parser cannot split it. */
+export function encodeWindowsCleanupPath(value: string): string {
+	return Buffer.from(value, "utf16le").toString("base64");
+}
+
+/** Kill only orphaned/running Doctor children for this exact installed bundle path. */
+export function windowsDoctorProcessCleanupCommand(plan: ServicePlan): ServiceCommand {
+	return {
+		command: WINDOWS_POWERSHELL_PATH,
+		args: [
+			"-NoLogo",
+			"-NoProfile",
+			"-NonInteractive",
+			"-ExecutionPolicy",
+			"Bypass",
+			"-Command",
+			WINDOWS_DOCTOR_PROCESS_CLEANUP_SCRIPT,
+			encodeWindowsCleanupPath(plan.execPath),
+			encodeWindowsCleanupPath(process.execPath),
+		],
+	};
+}
+
 /** The user's numeric uid for the launchd `gui/<uid>` domain target. Injected (default: live uid). */
 export type ReadUidFn = () => number;
 
@@ -65,6 +110,9 @@ export function installCommands(plan: ServicePlan, uid: number): readonly Servic
 		case "launchd": {
 			const domain = launchdDomainTarget(plan, uid);
 			return [
+				// Reconcile a previously loaded definition. A clean "not loaded" result is
+				// tolerated by the service module; any real permission failure remains fatal.
+				{ command: "launchctl", args: ["bootout", launchdServiceTarget(plan, uid)] },
 				// Modern load: bootstrap the unit into the (user GUI | system) domain.
 				{ command: "launchctl", args: ["bootstrap", domain, plan.unitPath] },
 				// Ensure it is started now (idempotent kick; harmless if already running).
@@ -81,6 +129,11 @@ export function installCommands(plan: ServicePlan, uid: number): readonly Servic
 		case "schtasks": {
 			// Per-user Scheduled Task from the rendered XML; /F overwrites idempotently.
 			return [
+				// Reconciliation must stop the tracked wrapper and any legacy orphaned child
+				// before replacing the definition; otherwise the new `/Run` can create a
+				// second watchdog while the old one still owns Doctor's status port.
+				{ command: "schtasks", args: ["/End", "/TN", WINDOWS_TASK_NAME] },
+				windowsDoctorProcessCleanupCommand(plan),
 				{ command: "schtasks", args: ["/Create", "/XML", plan.unitPath, "/TN", WINDOWS_TASK_NAME, "/F"] },
 				// Start it immediately so a clean install is running without waiting for the next logon.
 				{ command: "schtasks", args: ["/Run", "/TN", WINDOWS_TASK_NAME] },
@@ -94,6 +147,8 @@ export function installCommands(plan: ServicePlan, uid: number): readonly Servic
 					command: "sc",
 					args: ["create", WINDOWS_TASK_NAME, `binPath=${binPath}`, "start=", "auto"],
 				},
+				// `create` establishes a missing service; `config` reconciles an existing one.
+				{ command: "sc", args: ["config", WINDOWS_TASK_NAME, `binPath=${binPath}`, "start=", "auto"] },
 				{ command: "sc", args: ["start", WINDOWS_TASK_NAME] },
 			];
 		}
@@ -116,7 +171,11 @@ export function uninstallCommands(plan: ServicePlan, uid: number): readonly Serv
 			];
 		}
 		case "schtasks":
-			return [{ command: "schtasks", args: ["/Delete", "/TN", WINDOWS_TASK_NAME, "/F"] }];
+			return [
+				{ command: "schtasks", args: ["/End", "/TN", WINDOWS_TASK_NAME] },
+				windowsDoctorProcessCleanupCommand(plan),
+				{ command: "schtasks", args: ["/Delete", "/TN", WINDOWS_TASK_NAME, "/F"] },
+			];
 		case "sc":
 			return [
 				{ command: "sc", args: ["stop", WINDOWS_TASK_NAME] },
@@ -134,14 +193,24 @@ export function uninstallCommands(plan: ServicePlan, uid: number): readonly Serv
 export function startCommands(plan: ServicePlan, uid: number): readonly ServiceCommand[] {
 	switch (plan.manager) {
 		case "launchd":
-			// `kickstart -k` (re)starts the job in its existing domain; harmless if already running.
-			return [{ command: "launchctl", args: ["kickstart", "-k", launchdServiceTarget(plan, uid)] }];
+			// Explicit stop unloads the job so KeepAlive cannot resurrect it. Start therefore
+			// bootstraps the installed plist before kickstarting; "already loaded" is tolerated.
+			return [
+				{ command: "launchctl", args: ["bootstrap", launchdDomainTarget(plan, uid), plan.unitPath] },
+				{ command: "launchctl", args: ["kickstart", "-k", launchdServiceTarget(plan, uid)] },
+			];
 		case "systemd": {
 			const scopeArgs = plan.scope === "user" ? ["--user"] : [];
 			return [{ command: "systemctl", args: [...scopeArgs, "start", SYSTEMD_UNIT_NAME] }];
 		}
 		case "schtasks":
-			return [{ command: "schtasks", args: ["/Run", "/TN", WINDOWS_TASK_NAME] }];
+			// A previous Task Scheduler `/End` can leave the headless Node child orphaned.
+			// Reap only Doctor's exact child before starting so a stale process cannot race
+			// the new task for the status port.
+			return [
+				windowsDoctorProcessCleanupCommand(plan),
+				{ command: "schtasks", args: ["/Run", "/TN", WINDOWS_TASK_NAME] },
+			];
 		case "sc":
 			return [{ command: "sc", args: ["start", WINDOWS_TASK_NAME] }];
 	}
@@ -149,24 +218,25 @@ export function startCommands(plan: ServicePlan, uid: number): readonly ServiceC
 
 /**
  * The argv to STOP (without deregistering) the service for this plan (PRD-003b b-AC-1).
- * Unlike {@link uninstallCommands}, this never unloads the unit / deletes the task: the
- * service manager's own restart-on-crash policy (`KeepAlive`/`Restart=always`/the
- * Scheduled Task's own trigger) stays intact, so a later `start` (or a crash) brings it
- * back without re-registering.
+ * Unlike {@link uninstallCommands}, this never deletes the installed definition. launchd
+ * must unload the job because an unconditional KeepAlive job cannot otherwise remain
+ * explicitly stopped; a later start bootstraps the retained plist again.
  */
 export function stopCommands(plan: ServicePlan, uid: number): readonly ServiceCommand[] {
 	switch (plan.manager) {
 		case "launchd":
-			// `kill SIGTERM` stops the running instance WITHOUT bootout (the job stays loaded,
-			// so `KeepAlive` does not immediately race a restart the way a bare SIGKILL would,
-			// and a subsequent `start` (kickstart) brings it back without re-bootstrapping).
-			return [{ command: "launchctl", args: ["kill", "SIGTERM", launchdServiceTarget(plan, uid)] }];
+			// Keep the plist installed but unload the job, guaranteeing KeepAlive cannot race
+			// an explicit stop. `startCommands` reloads this same retained definition.
+			return [{ command: "launchctl", args: ["bootout", launchdServiceTarget(plan, uid)] }];
 		case "systemd": {
 			const scopeArgs = plan.scope === "user" ? ["--user"] : [];
 			return [{ command: "systemctl", args: [...scopeArgs, "stop", SYSTEMD_UNIT_NAME] }];
 		}
 		case "schtasks":
-			return [{ command: "schtasks", args: ["/End", "/TN", WINDOWS_TASK_NAME] }];
+			return [
+				{ command: "schtasks", args: ["/End", "/TN", WINDOWS_TASK_NAME] },
+				windowsDoctorProcessCleanupCommand(plan),
+			];
 		case "sc":
 			return [{ command: "sc", args: ["stop", WINDOWS_TASK_NAME] }];
 	}

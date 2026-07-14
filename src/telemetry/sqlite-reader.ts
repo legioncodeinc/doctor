@@ -22,7 +22,7 @@
  * is isolated (PRD-001c c-AC-6) rather than wedging the loop or another service's read.
  */
 
-import { DatabaseSync } from "node:sqlite";
+import { createRequire } from "node:module";
 
 import type { ServiceLogRow, ServiceMetrics, ServiceStatusRow } from "./schema.js";
 import { toCamelCase } from "./schema.js";
@@ -121,6 +121,9 @@ function parseMetricsRow(row: Record<string, unknown> | undefined): ServiceMetri
  * the loop or another service's read (PRD-001c c-AC-6).
  */
 export function openTelemetryDb(path: string): TelemetryDbReader {
+	// Load the experimental built-in only when the long-running ingestion path actually
+	// opens a database. One-shot CLI commands (especially --json) stay warning-free.
+	const { DatabaseSync } = createRequire(import.meta.url)("node:sqlite") as typeof import("node:sqlite");
 	const db = new DatabaseSync(path, { readOnly: true, timeout: BUSY_TIMEOUT_MS });
 	let closed = false;
 

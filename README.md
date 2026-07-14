@@ -127,7 +127,7 @@ To install or update it on its own:
 
 ```bash
 npm install -g @legioncodeinc/doctor
-doctor install-service   # register the OS service (restart-on-crash, start-on-boot)
+doctor service-install   # register the OS service (restart-on-crash, start-on-boot)
 ```
 
 <details>
@@ -161,23 +161,28 @@ The dashboard is **Hive portal at `http://127.0.0.1:3853`**: fleet health lives 
 
 Run `doctor` with no arguments for the banner and menu. The full surface:
 
+The [Apiary suite command matrix](https://github.com/legioncodeinc/cli-kit/blob/main/library/notes/prd-003-command-matrix.md) is the normative cross-product contract; Doctor-specific behavior and compatibility commands are listed below.
+
 | Command | What it does |
 |---|---|
-| `doctor status` | daemon health, service state, versions, last heal, opt-out flags |
+| `doctor start` / `doctor stop` / `doctor restart` | control Doctor's installed OS service; restart waits for the service to report running |
+| `doctor install` / `doctor uninstall --yes` | onboard or remove Doctor and Doctor-owned state |
+| `doctor service-install` / `doctor service-uninstall` | reconcile or remove only Doctor's OS service definition |
+| `doctor update [--check]` | safely update Doctor, verify the restarted service, and roll back on failed health verification |
+| `doctor status` | standard service/install/health/path snapshot plus supervised-daemon detail |
+| `doctor logs [--lines N] [--no-follow] [--since 30m]` | tail only Doctor's authoritative service log with secret redaction |
+| `doctor telemetry` | show read-only collection state, controlling setting, and destination class |
 | `doctor diagnose` | classify health and print the recommended fix, taking **no** action |
 | `doctor heal` | run the remediation ladder once (gated steps confirm first) |
-| `doctor start` / `doctor stop` | start or stop Doctor's own daemon (via the OS service when registered) |
-| `doctor restart` | restart the primary daemon (rung 1) |
 | `doctor reinstall` | reinstall the primary daemon (rung 2) |
 | `doctor uninstall-hivemind` | remove a conflicting `@deeplake/hivemind` global (rung 3, confirms) |
-| `doctor update [--check]` | update the primary daemon via the blessed gate |
-| `doctor self-update` | update Doctor's own package (the **only** thing that does) |
-| `doctor install-service` / `uninstall-service` | register or remove the OS service |
-| `doctor uninstall` | remove Doctor's service unit, registry entry, and state dir (npm package stays) |
+| `doctor daemon-update [--check]` | compatibility surface for the former primary-daemon `update` behavior |
+| `doctor self-update` | deprecated alias for canonical `doctor update` |
+| `doctor install-service` / `uninstall-service` | deprecated aliases for the canonical service commands |
 | `doctor purge` | **DESTRUCTIVE:** wipe every Apiary asset on the machine (confirms, see below) |
-| `doctor logs` | tail incident logs for all daemons, or one via `--daemon <name>` |
+| `doctor incidents [--daemon name]` | read Doctor's product-specific fleet incident records |
 
-Doctor never updates itself in the background. `self-update` is the single, explicit way to bump it, and there is deliberately no `clear-credentials` command: credential purges are only ever recommended via escalation, never automated.
+Doctor never updates itself in the background. Canonical `update` is the explicit, verified Doctor update transaction; the old primary-daemon meaning moved to `daemon-update`. There is deliberately no `clear-credentials` command: credential purges are only ever recommended via escalation, never automated.
 
 ### The escape hatch: `doctor purge`
 
