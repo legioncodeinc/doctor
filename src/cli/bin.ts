@@ -23,9 +23,8 @@
  */
 
 import { runCli } from "./index.js";
+import { isDirectInvocation } from "./direct-invocation.js";
 import { finalizeOneShot, isOneShot } from "./shutdown.js";
-import { resolve } from "node:path";
-import { pathToFileURL } from "node:url";
 
 // Programmatic conformance tests may import the packed artifact and inject a hermetic
 // context into the real dispatcher. Importing the executable must never run production
@@ -33,7 +32,7 @@ import { pathToFileURL } from "node:url";
 export { dispatch } from "./dispatch.js";
 
 const invokedPath = process.argv[1];
-const directlyInvoked = invokedPath !== undefined && import.meta.url === pathToFileURL(resolve(invokedPath)).href;
+const directlyInvoked = isDirectInvocation(invokedPath, import.meta.url);
 
 if (directlyInvoked) {
 	const argv = process.argv.slice(2);
