@@ -19,6 +19,8 @@ import { encodeWindowsCleanupPath } from "../../src/service/argv.js";
 import { SERVICE_LABEL } from "../../src/service/platform.js";
 import { createMemoryFs, createRecordingRunner, fixedEnv } from "./helpers.js";
 
+const TEST_MACOS_UID = 501;
+
 describe("install - writes the unit file then runs the manager argv", () => {
 	it("Linux: writes the systemd unit, then enables it (file before command)", async () => {
 		const runner = createRecordingRunner();
@@ -59,6 +61,7 @@ describe("install - writes the unit file then runs the manager argv", () => {
 			execPath: "/opt/doctor",
 			runner,
 			fs,
+			uid: TEST_MACOS_UID,
 			environment: fixedEnv({ platform: "darwin", home: "/Users/t" }),
 		});
 
@@ -71,7 +74,7 @@ describe("install - writes the unit file then runs the manager argv", () => {
 		expect(runner.calls[0]?.args[0]).toBe("bootout");
 		expect(runner.calls[0]?.args[1]).toContain("com.legioncode.hivedoctor");
 		// Current-label bootout reconciles an already-loaded job before the new plist is loaded.
-		expect(runner.calls[1]?.args).toEqual(["bootout", `gui/0/${SERVICE_LABEL}`]);
+		expect(runner.calls[1]?.args).toEqual(["bootout", `gui/${TEST_MACOS_UID}/${SERVICE_LABEL}`]);
 		expect(runner.calls[2]?.args[0]).toBe("bootstrap");
 		expect(result.ok).toBe(true);
 	});
@@ -458,13 +461,14 @@ describe("start/stop (PRD-003b b-AC-1)", () => {
 			execPath: "/opt/doctor",
 			runner,
 			fs,
+			uid: TEST_MACOS_UID,
 			environment: fixedEnv({ platform: "darwin", home: "/Users/t" }),
 		});
 		await module.start();
 		expect(runner.calls[0]?.args[0]).toBe("bootstrap");
 		expect(runner.calls[1]?.args[0]).toBe("kickstart");
 		await module.stop();
-		expect(runner.calls[2]?.args).toEqual(["bootout", `gui/0/${SERVICE_LABEL}`]);
+		expect(runner.calls[2]?.args).toEqual(["bootout", `gui/${TEST_MACOS_UID}/${SERVICE_LABEL}`]);
 		expect(fs.files.has(unitPath)).toBe(true);
 	});
 
