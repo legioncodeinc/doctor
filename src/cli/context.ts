@@ -21,6 +21,7 @@ import type { LadderDecision, RemediationLadder, RungContext } from "../remediat
 import type { LifecycleTelemetry } from "../telemetry/capture.js";
 import type { ServiceLifecycleModule, ServiceModule, ServiceResult } from "./service-stub.js";
 import type { ResolvedOptOut } from "./opt-out.js";
+import type { LogTailResult, TelemetrySummary } from "@legioncodeinc/cli-kit";
 
 /** A captured line of output (text + which stream it went to). */
 export interface OutputLine {
@@ -64,10 +65,19 @@ export interface UpdateActions {
 	 * only command that ever calls it.
 	 */
 	selfUpdate(): Promise<string>;
+	/** Preview Doctor's own approved release without installing it. */
+	readonly checkSelfUpdate?: () => Promise<string>;
 }
 
 /** Reads the recent incident-log lines for `logs`. */
 export type TailIncidentsFn = (limit: number, daemonName?: string) => Promise<readonly string[]>;
+
+/** Tail only Doctor's authoritative OS-service log. */
+export type TailServiceLogsFn = (
+	argv: readonly string[],
+	write: (line: string) => void,
+	signal?: AbortSignal,
+) => Promise<LogTailResult>;
 
 /** Snapshot of the persisted state the `status` command reports (read defensively). */
 export interface StatusStateSnapshot {
@@ -176,6 +186,12 @@ export interface CliDeps {
 	readonly update: UpdateActions;
 	/** Tail recent incident-log lines for `logs`. */
 	readonly tailIncidents: TailIncidentsFn;
+	/** Canonical service-log tailer; deliberately separate from fleet incident records. */
+	readonly tailServiceLogs?: TailServiceLogsFn;
+	/** Doctor-owned paths used by the common status contract. */
+	readonly paths?: { readonly config: string; readonly logs: string };
+	/** Read-only common telemetry summary. */
+	readonly telemetrySummary?: () => TelemetrySummary;
 	/**
 	 * The 064b service module, when wired in. When absent, `install-service`/`uninstall-service`
 	 * print the "not yet available" stub message. The composition root injects the real module.
@@ -186,6 +202,8 @@ export interface CliDeps {
 	 * and `stop` print the same "not yet available" stub message `install-service` does.
 	 */
 	readonly serviceLifecycle?: ServiceLifecycleModule;
+	/** Injectable bounded-poll delay; production uses a timer and tests use an immediate seam. */
+	readonly lifecycleSleep?: (milliseconds: number) => Promise<void>;
 	/**
 	 * The full three-part `uninstall` seam (PRD-003b b-AC-2/3/4/6), when wired in. When
 	 * absent, `uninstall` prints the "not yet available" stub message. `uninstall-service`

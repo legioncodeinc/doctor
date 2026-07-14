@@ -1,0 +1,251 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`PRD-003 Doctor CLI conformance > goldens enabled and opted-out telemetry in human and JSON > enabled telemetry JSON 1`] = `
+{
+  "command": "telemetry",
+  "message": "Doctor telemetry status",
+  "ok": true,
+  "product": "doctor",
+  "telemetry": {
+    "controllingSetting": "default",
+    "destination": "hosted",
+    "optOutInstruction": "Set DO_NOT_TRACK=1",
+    "state": "enabled",
+  },
+}
+`;
+
+exports[`PRD-003 Doctor CLI conformance > goldens enabled and opted-out telemetry in human and JSON > enabled telemetry human 1`] = `
+"Telemetry: enabled
+Controlled by: default
+Destination: hosted
+Queue: not available
+Last successful send: not available
+Last error: none
+Opt out: Set DO_NOT_TRACK=1"
+`;
+
+exports[`PRD-003 Doctor CLI conformance > goldens enabled and opted-out telemetry in human and JSON > opted-out telemetry JSON 1`] = `
+{
+  "command": "telemetry",
+  "message": "Doctor telemetry status",
+  "ok": true,
+  "product": "doctor",
+  "telemetry": {
+    "controllingSetting": "DO_NOT_TRACK",
+    "destination": "disabled",
+    "optOutInstruction": "Unset DO_NOT_TRACK",
+    "state": "opted-out",
+  },
+}
+`;
+
+exports[`PRD-003 Doctor CLI conformance > goldens enabled and opted-out telemetry in human and JSON > opted-out telemetry human 1`] = `
+"Telemetry: opted-out
+Controlled by: DO_NOT_TRACK
+Destination: disabled
+Queue: not available
+Last successful send: not available
+Last error: none
+Opt out: Unset DO_NOT_TRACK"
+`;
+
+exports[`PRD-003 Doctor CLI conformance > goldens running, stopped, not-installed, and unhealthy status in human and JSON > not-installed status JSON 1`] = `
+{
+  "command": "status",
+  "message": "Doctor status",
+  "ok": true,
+  "product": "doctor",
+  "status": {
+    "details": {
+      "detail1": "Daemon: honeycomb
+  Daemon health: ok
+  Daemon version: 1.2.3
+  Last heal: never",
+      "detail2": "Auto-update: enabled",
+    },
+    "health": {
+      "result": "Doctor is the health observer",
+      "state": "not-applicable",
+    },
+    "installation": "not-installed",
+    "paths": {
+      "config": "/apiary/doctor",
+      "logs": "/apiary/doctor/service.log",
+    },
+    "process": {
+      "state": "unknown",
+    },
+    "product": "DOCTOR",
+    "registration": "not-applicable",
+    "version": "9.9.9-test",
+  },
+}
+`;
+
+exports[`PRD-003 Doctor CLI conformance > goldens running, stopped, not-installed, and unhealthy status in human and JSON > not-installed status human 1`] = `
+"Product: DOCTOR 9.9.9-test
+Service: not-installed
+Process: unknown
+Health: not-applicable - Doctor is the health observer
+Registration: not-applicable
+Update: unknown
+Config: /apiary/doctor
+Logs: /apiary/doctor/service.log
+Details:
+  detail1: Daemon: honeycomb
+  Daemon health: ok
+  Daemon version: 1.2.3
+  Last heal: never
+  detail2: Auto-update: enabled"
+`;
+
+exports[`PRD-003 Doctor CLI conformance > goldens running, stopped, not-installed, and unhealthy status in human and JSON > running status JSON 1`] = `
+{
+  "command": "status",
+  "message": "Doctor status",
+  "ok": true,
+  "product": "doctor",
+  "status": {
+    "details": {
+      "detail1": "Daemon: honeycomb
+  Daemon health: ok
+  Daemon version: 1.2.3
+  Last heal: never",
+      "detail2": "Auto-update: enabled",
+    },
+    "health": {
+      "result": "Doctor is the health observer",
+      "state": "not-applicable",
+    },
+    "installation": "installed",
+    "paths": {
+      "config": "/apiary/doctor",
+      "logs": "/apiary/doctor/service.log",
+    },
+    "process": {
+      "state": "running",
+    },
+    "product": "DOCTOR",
+    "registration": "not-applicable",
+    "version": "9.9.9-test",
+  },
+}
+`;
+
+exports[`PRD-003 Doctor CLI conformance > goldens running, stopped, not-installed, and unhealthy status in human and JSON > running status human 1`] = `
+"Product: DOCTOR 9.9.9-test
+Service: installed
+Process: running
+Health: not-applicable - Doctor is the health observer
+Registration: not-applicable
+Update: unknown
+Config: /apiary/doctor
+Logs: /apiary/doctor/service.log
+Details:
+  detail1: Daemon: honeycomb
+  Daemon health: ok
+  Daemon version: 1.2.3
+  Last heal: never
+  detail2: Auto-update: enabled"
+`;
+
+exports[`PRD-003 Doctor CLI conformance > goldens running, stopped, not-installed, and unhealthy status in human and JSON > stopped status JSON 1`] = `
+{
+  "command": "status",
+  "message": "Doctor status",
+  "ok": true,
+  "product": "doctor",
+  "status": {
+    "details": {
+      "detail1": "Daemon: honeycomb
+  Daemon health: ok
+  Daemon version: 1.2.3
+  Last heal: never",
+      "detail2": "Auto-update: enabled",
+    },
+    "health": {
+      "result": "Doctor is the health observer",
+      "state": "not-applicable",
+    },
+    "installation": "installed",
+    "paths": {
+      "config": "/apiary/doctor",
+      "logs": "/apiary/doctor/service.log",
+    },
+    "process": {
+      "state": "stopped",
+    },
+    "product": "DOCTOR",
+    "registration": "not-applicable",
+    "version": "9.9.9-test",
+  },
+}
+`;
+
+exports[`PRD-003 Doctor CLI conformance > goldens running, stopped, not-installed, and unhealthy status in human and JSON > stopped status human 1`] = `
+"Product: DOCTOR 9.9.9-test
+Service: installed
+Process: stopped
+Health: not-applicable - Doctor is the health observer
+Registration: not-applicable
+Update: unknown
+Config: /apiary/doctor
+Logs: /apiary/doctor/service.log
+Details:
+  detail1: Daemon: honeycomb
+  Daemon health: ok
+  Daemon version: 1.2.3
+  Last heal: never
+  detail2: Auto-update: enabled"
+`;
+
+exports[`PRD-003 Doctor CLI conformance > goldens running, stopped, not-installed, and unhealthy status in human and JSON > unhealthy status JSON 1`] = `
+{
+  "command": "status",
+  "message": "Doctor status",
+  "ok": true,
+  "product": "doctor",
+  "status": {
+    "details": {
+      "detail1": "Daemon: honeycomb
+  Daemon health: unreachable (timed out / wedged)
+  Daemon version: 1.2.3
+  Last heal: never",
+      "detail2": "Auto-update: enabled",
+    },
+    "health": {
+      "result": "Doctor is the health observer",
+      "state": "not-applicable",
+    },
+    "installation": "installed",
+    "paths": {
+      "config": "/apiary/doctor",
+      "logs": "/apiary/doctor/service.log",
+    },
+    "process": {
+      "state": "running",
+    },
+    "product": "DOCTOR",
+    "registration": "not-applicable",
+    "version": "9.9.9-test",
+  },
+}
+`;
+
+exports[`PRD-003 Doctor CLI conformance > goldens running, stopped, not-installed, and unhealthy status in human and JSON > unhealthy status human 1`] = `
+"Product: DOCTOR 9.9.9-test
+Service: installed
+Process: running
+Health: not-applicable - Doctor is the health observer
+Registration: not-applicable
+Update: unknown
+Config: /apiary/doctor
+Logs: /apiary/doctor/service.log
+Details:
+  detail1: Daemon: honeycomb
+  Daemon health: unreachable (timed out / wedged)
+  Daemon version: 1.2.3
+  Last heal: never
+  detail2: Auto-update: enabled"
+`;

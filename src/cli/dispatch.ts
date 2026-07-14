@@ -22,16 +22,106 @@
 
 import { parseArgs, hasFlag, type ParsedArgs } from "./arg-parse.js";
 import { renderBannerWithMenu } from "./banner.js";
-import { resolveCommand, type CommandName } from "./command-table.js";
+import { resolveCommandDetailed, type CommandName } from "./command-table.js";
 import { DOCTOR_VERSION } from "../version.js";
 import type { CliContext, ServiceState } from "./context.js";
 import { SERVICE_NOT_AVAILABLE } from "./service-stub.js";
 import type { HealthClassification } from "../health-probe.js";
+import {
+	formatStatus,
+	formatTelemetrySummary,
+	parseLogTailOptions,
+	redactLogSecrets,
+	renderVersion,
+	renderVersionJson,
+	type ServiceStatus,
+} from "@legioncodeinc/cli-kit";
 
 /** Exit codes the dispatcher returns. 0 = ok; 1 = handler error; 2 = user declined a gate. */
 export const EXIT_OK = 0;
 export const EXIT_ERROR = 1;
 export const EXIT_DECLINED = 2;
+
+type OptionKind = "boolean" | "value";
+
+const GLOBAL_OPTIONS: Readonly<Record<string, OptionKind>> = Object.freeze({
+	help: "boolean",
+	version: "boolean",
+	json: "boolean",
+	"no-color": "boolean",
+});
+
+const COMMAND_OPTIONS: Readonly<Record<CommandName, Readonly<Record<string, OptionKind>>>> = Object.freeze({
+	start: {}, stop: {}, restart: {}, status: {}, install: {}, "service-install": {},
+	"service-uninstall": {}, telemetry: {}, run: {}, diagnose: {}, "self-update": {}, help: {},
+	logs: { lines: "value", since: "value", "no-follow": "boolean" },
+	uninstall: { yes: "boolean" },
+	update: { check: "boolean" },
+	heal: { yes: "boolean" },
+	reinstall: { yes: "boolean" },
+	"uninstall-hivemind": { yes: "boolean" },
+	"daemon-update": { check: "boolean" },
+	purge: { yes: "boolean" },
+	incidents: { lines: "value", daemon: "value" },
+});
+
+function optionArgv(parsed: ParsedArgs, ignored: ReadonlySet<string> = new Set()): string[] {
+	const result: string[] = [];
+	for (const [name, value] of Object.entries(parsed.flags)) {
+		if (ignored.has(name)) continue;
+		result.push(`--${name}`);
+		if (typeof value === "string") result.push(value);
+	}
+	result.push(...parsed.positionals);
+	return result;
+}
+
+function validateInvocation(command: CommandName, parsed: ParsedArgs): string | null {
+	if (parsed.positionals.length > 0) {
+		return `${command} does not accept positional arguments: ${parsed.positionals.join(" ")}`;
+	}
+	const commandOptions = COMMAND_OPTIONS[command];
+	for (const [name, value] of Object.entries(parsed.flags)) {
+		const kind = commandOptions[name] ?? GLOBAL_OPTIONS[name];
+		if (kind === undefined) return `Unknown option for ${command}: --${name}`;
+		if (kind === "boolean" && value !== true) return `Option --${name} does not accept a value.`;
+		if (kind === "value" && (typeof value !== "string" || value.trim() === "")) {
+			return `Option --${name} requires a value.`;
+		}
+	}
+	if (command === "logs") {
+		const result = parseLogTailOptions(optionArgv(parsed, new Set(Object.keys(GLOBAL_OPTIONS))));
+		if (!result.ok) return result.error;
+	}
+	if (command === "incidents") {
+		const lines = parsed.flags["lines"];
+		if (lines !== undefined && (typeof lines !== "string" || !/^\d+$/u.test(lines) || Number(lines) < 1)) {
+			return "--lines must be a positive integer.";
+		}
+	}
+	return null;
+}
+
+function validateBareInvocation(parsed: ParsedArgs): string | null {
+	for (const [name, value] of Object.entries(parsed.flags)) {
+		const kind = GLOBAL_OPTIONS[name];
+		if (kind === undefined) return `Unknown global option: --${name}`;
+		if (kind === "boolean" && value !== true) return `Option --${name} does not accept a value.`;
+	}
+	return null;
+}
+
+function usageFailure(ctx: CliContext, command: string, message: string, json: boolean): number {
+	const full = `${message} Run 'doctor ${command || "--help"} --help' for usage.`;
+	if (json) ctx.io.out(JSON.stringify({ product: "doctor", command, ok: false, message: full }));
+	else ctx.io.err(ctx.colors.red(full));
+	return EXIT_DECLINED;
+}
+
+interface DoctorStatusResult {
+	readonly status: ServiceStatus;
+	readonly daemonDetails: readonly string[];
+}
 
 /** Map a classification to a short human label for `status` / `diagnose`. */
 function healthLabel(c: HealthClassification): string {
@@ -55,8 +145,8 @@ function isUnhealthy(c: HealthClassification): boolean {
 }
 
 /** `status` (AC-064f.2 / AC-064f.6): health, service state, both versions, last heal, opt-out. */
-async function runStatus(ctx: CliContext): Promise<number> {
-	const { io, colors, deps } = ctx;
+async function inspectStatus(ctx: CliContext): Promise<DoctorStatusResult> {
+	const { deps } = ctx;
 	const daemonSources = deps.statusDaemons();
 	// The service state prefers the bounded ASYNC probe (wired to serviceStatus in the composition
 	// root, IRD-192 AC-5) so a registered task reports its real state, never a hardcoded "unknown".
@@ -64,9 +154,13 @@ async function runStatus(ctx: CliContext): Promise<number> {
 	// The sync serviceState() seam is the test-harness fallback when the async probe is not injected.
 	const serviceState = deps.serviceStateAsync !== undefined ? await deps.serviceStateAsync() : deps.serviceState();
 
-	io.out(colors.bold("Doctor status"));
-	io.out(`  Doctor service: ${colors.cyan(serviceState)}`);
-	io.out(`  Doctor version: ${deps.doctorVersion}`);
+	let installed = serviceState !== "unknown";
+	try {
+		if (deps.productUninstall !== undefined) installed = await deps.productUninstall.isServiceRegistered();
+	} catch {
+		installed = serviceState !== "unknown";
+	}
+	const daemonDetails: string[] = [];
 	for (const daemon of daemonSources) {
 		let classification: HealthClassification = { kind: "unreachable-timeout" };
 		try {
@@ -92,22 +186,35 @@ async function runStatus(ctx: CliContext): Promise<number> {
 			state = { lastHealAt: null, lastKnownHealth: "unknown" };
 		}
 
-		io.out("");
-		io.out(colors.bold(`Daemon: ${daemon.name}`));
-		io.out(`  Daemon health:      ${colors.cyan(healthLabel(classification))}`);
-		io.out(`  Daemon version:     ${daemonVersion ?? colors.dim("unknown (daemon unreachable)")}`);
-		io.out(`  Last heal:          ${state.lastHealAt ?? colors.dim("never")}`);
+		daemonDetails.push(
+			`Daemon: ${daemon.name}\n  Daemon health: ${healthLabel(classification)}\n  Daemon version: ${daemonVersion ?? "unknown (daemon unreachable)"}\n  Last heal: ${state.lastHealAt ?? "never"}`,
+		);
 	}
 
 	// Opt-out flags - honest about which layer disabled auto-update (OD-5 / AC-064e.4).
-	const autoUpdate = deps.optOut.autoUpdateDisabled
-		? colors.yellow(`disabled (${deps.optOut.source})`)
-		: colors.green("enabled");
-	io.out("");
-	io.out(`  Auto-update:        ${autoUpdate}`);
+	const autoUpdate = deps.optOut.autoUpdateDisabled ? `disabled (${deps.optOut.source})` : "enabled";
+	daemonDetails.push(`Auto-update: ${autoUpdate}`);
 	if (deps.optOut.pinnedVersion !== undefined) {
-		io.out(`  Pinned version:     ${deps.optOut.pinnedVersion}`);
+		daemonDetails.push(`Pinned version: ${deps.optOut.pinnedVersion}`);
 	}
+	return {
+		status: {
+			product: "DOCTOR",
+			version: deps.doctorVersion,
+			installation: installed ? "installed" : "not-installed",
+			process: { state: serviceState === "running" ? "running" : serviceState === "not-running" ? "stopped" : "unknown" },
+			health: { state: "not-applicable", result: "Doctor is the health observer" },
+			registration: "not-applicable",
+			paths: deps.paths ?? { config: "unknown", logs: "unknown" },
+			details: Object.fromEntries(daemonDetails.map((line, index) => [`detail${index + 1}`, line])),
+		},
+		daemonDetails,
+	};
+}
+
+async function runStatus(ctx: CliContext): Promise<number> {
+	const result = await inspectStatus(ctx);
+	ctx.io.out(formatStatus(result.status).trimEnd());
 	return EXIT_OK;
 }
 
@@ -162,7 +269,7 @@ async function runHeal(ctx: CliContext, parsed: ParsedArgs): Promise<number> {
 
 	const result = await deps.ladder.run(decision.rung, deps.rungContextFor(classification));
 	const outcome = result.skipped === true ? "skipped" : result.ok ? "succeeded" : "failed";
-	io.out(`Ran ${colors.cyan(result.action)} -> ${outcome}${result.detail ? ` (${result.detail})` : ""}`);
+	io.out(`Ran ${colors.cyan(redactLogSecrets(result.action))} -> ${outcome}${result.detail ? ` (${redactLogSecrets(result.detail)})` : ""}`);
 	return result.ok || result.skipped === true ? EXIT_OK : EXIT_ERROR;
 }
 
@@ -179,7 +286,7 @@ async function runRung(ctx: CliContext, rung: number, gated: boolean, parsed: Pa
 	const classification = await deps.probe();
 	const result = await deps.ladder.run(rung, deps.rungContextFor(classification));
 	const outcome = result.skipped === true ? "skipped" : result.ok ? "succeeded" : "failed";
-	io.out(`Ran ${colors.cyan(result.action)} -> ${outcome}${result.detail ? ` (${result.detail})` : ""}`);
+	io.out(`Ran ${colors.cyan(redactLogSecrets(result.action))} -> ${outcome}${result.detail ? ` (${redactLogSecrets(result.detail)})` : ""}`);
 	return result.ok || result.skipped === true ? EXIT_OK : EXIT_ERROR;
 }
 
@@ -195,21 +302,35 @@ async function runUninstallHivemind(ctx: CliContext, parsed: ParsedArgs): Promis
 	return runRung(ctx, 3, true, parsed);
 }
 
-/** `update [--check]`: primary-daemon update via the blessed gate (064e). */
+/** Canonical `update`: Doctor's own package. The supervised-daemon updater is `daemon-update`. */
 async function runUpdate(ctx: CliContext, parsed: ParsedArgs): Promise<number> {
 	const { io, deps } = ctx;
 	if (hasFlag(parsed, "check")) {
-		io.out(await deps.update.checkPrimaryUpdate());
+		io.out(redactLogSecrets(
+			deps.update.checkSelfUpdate === undefined
+				? `Doctor installed version: ${deps.doctorVersion}; run 'doctor update' to resolve the approved latest release.`
+				: await deps.update.checkSelfUpdate(),
+		));
 		return EXIT_OK;
 	}
-	io.out(await deps.update.applyPrimaryUpdate());
-	return EXIT_OK;
+	const message = await deps.update.selfUpdate();
+	io.out(redactLogSecrets(message));
+	return /failed/iu.test(message) ? EXIT_ERROR : EXIT_OK;
 }
 
-/** `self-update` (AC-064f.5): THE ONLY path that updates Doctor's own package. */
+/** Compatibility alias for canonical update. */
 async function runSelfUpdate(ctx: CliContext): Promise<number> {
-	ctx.io.out(await ctx.deps.update.selfUpdate());
-	return EXIT_OK;
+	ctx.io.out("Warning: 'self-update' is deprecated; use 'update'.");
+	return runUpdate(ctx, { command: "update", flags: {}, positionals: [] });
+}
+
+/** Preserve the pre-standard primary-daemon update under an explicit product command. */
+async function runDaemonUpdate(ctx: CliContext, parsed: ParsedArgs): Promise<number> {
+	const message = hasFlag(parsed, "check")
+		? await ctx.deps.update.checkPrimaryUpdate()
+		: await ctx.deps.update.applyPrimaryUpdate();
+	ctx.io.out(redactLogSecrets(message));
+	return /failed|rolled_back/iu.test(message) ? EXIT_ERROR : EXIT_OK;
 }
 
 /**
@@ -226,8 +347,8 @@ async function runSelfUpdate(ctx: CliContext): Promise<number> {
 async function runService(ctx: CliContext, kind: "install" | "uninstall"): Promise<number> {
 	const { io, deps } = ctx;
 	if (deps.serviceModule === undefined) {
-		io.out(SERVICE_NOT_AVAILABLE);
-		return EXIT_OK;
+		io.err(SERVICE_NOT_AVAILABLE);
+		return EXIT_ERROR;
 	}
 	if (kind === "uninstall" && deps.lifecycle !== undefined) {
 		// Fire-and-forget BEFORE teardown: the emitter never throws/rejects, and the POST
@@ -235,7 +356,7 @@ async function runService(ctx: CliContext, kind: "install" | "uninstall"): Promi
 		void deps.lifecycle.uninstalled();
 	}
 	const result = kind === "install" ? await deps.serviceModule.install() : await deps.serviceModule.uninstall();
-	io.out(result.message);
+	io.out(redactLogSecrets(result.message));
 	if (kind === "install" && result.ok && deps.lifecycle !== undefined) {
 		// Once per machine: the emitter checks + persists the state-store marker itself.
 		await deps.lifecycle.installed();
@@ -243,16 +364,90 @@ async function runService(ctx: CliContext, kind: "install" | "uninstall"): Promi
 	return result.ok ? EXIT_OK : EXIT_ERROR;
 }
 
+async function waitForServiceState(ctx: CliContext, expected: "running" | "not-running"): Promise<boolean> {
+	const probe = ctx.deps.productUninstall?.serviceStatusAsync ?? ctx.deps.serviceStateAsync;
+	if (probe === undefined) return false;
+	for (let attempt = 0; attempt < 20; attempt += 1) {
+		if ((await probe()) === expected) return true;
+		if (attempt < 19) {
+			await (ctx.deps.lifecycleSleep?.(100) ?? new Promise<void>((resolve) => setTimeout(resolve, 100)));
+		}
+	}
+	return false;
+}
+
 /** `start` / `stop` (PRD-003b b-AC-1): front doctor's OWN OS service, when 003b is wired. */
 async function runStartStop(ctx: CliContext, kind: "start" | "stop"): Promise<number> {
 	const { io, deps } = ctx;
 	if (deps.serviceLifecycle === undefined) {
-		io.out(SERVICE_NOT_AVAILABLE);
-		return EXIT_OK;
+		io.err(SERVICE_NOT_AVAILABLE);
+		return EXIT_ERROR;
+	}
+	if (deps.productUninstall !== undefined) {
+		const registered = await deps.productUninstall.isServiceRegistered();
+		if (!registered) {
+			if (kind === "stop") {
+				io.out("Doctor service is already stopped (not installed).");
+				return EXIT_OK;
+			}
+			io.err("Doctor service is not installed; run 'doctor service-install' first.");
+			return EXIT_ERROR;
+		}
+		const state = await deps.productUninstall.serviceStatusAsync();
+		if (kind === "start" && state === "running") {
+			io.out("Doctor service is already running.");
+			return EXIT_OK;
+		}
+		// Do not return early for an apparently stopped Windows task. Task Scheduler can
+		// report Ready after `/End` while its headless Node child remains alive. The real
+		// stop adapter is idempotent and also reaps only that exact Doctor child.
 	}
 	const result = kind === "start" ? await deps.serviceLifecycle.start() : await deps.serviceLifecycle.stop();
-	io.out(result.message);
-	return result.ok ? EXIT_OK : EXIT_ERROR;
+	io.out(redactLogSecrets(result.message));
+	if (!result.ok) return EXIT_ERROR;
+	const expected = kind === "start" ? "running" : "not-running";
+	if (!(await waitForServiceState(ctx, expected))) {
+		io.err(`Doctor service ${kind} command completed but the service did not reach ${expected === "running" ? "running" : "stopped"} state before the timeout.`);
+		return EXIT_ERROR;
+	}
+	io.out(`Doctor service is confirmed ${expected === "running" ? "running" : "stopped"}.`);
+	return EXIT_OK;
+}
+
+/** Restart Doctor's installed service and prove the manager reports it running. */
+async function runRestart(ctx: CliContext): Promise<number> {
+	const lifecycle = ctx.deps.serviceLifecycle;
+	if (lifecycle === undefined || ctx.deps.productUninstall === undefined) {
+		ctx.io.err("Doctor service lifecycle is unavailable; restart was not attempted.");
+		return EXIT_ERROR;
+	}
+	if (!(await ctx.deps.productUninstall.isServiceRegistered())) {
+		ctx.io.err("Doctor service is not installed; run 'doctor service-install' first.");
+		return EXIT_ERROR;
+	}
+	const stopped = await lifecycle.stop();
+	ctx.io.out(redactLogSecrets(stopped.message));
+	if (!stopped.ok || !(await waitForServiceState(ctx, "not-running"))) {
+		ctx.io.err("Doctor service did not reach stopped state before restart timed out.");
+		return EXIT_ERROR;
+	}
+	const started = await lifecycle.start();
+	ctx.io.out(redactLogSecrets(started.message));
+	if (!started.ok) return EXIT_ERROR;
+	if (await waitForServiceState(ctx, "running")) {
+		ctx.io.out("Doctor service restarted and is running.");
+		return EXIT_OK;
+	}
+	ctx.io.err("Doctor service restarted but did not reach running state before the timeout.");
+	return EXIT_ERROR;
+}
+
+/** Doctor onboarding: reconcile its service definition and report the phase explicitly. */
+async function runInstall(ctx: CliContext): Promise<number> {
+	ctx.io.out("Onboarding: Doctor requires no login or fleet self-registration.");
+	const code = await runService(ctx, "install");
+	if (code === EXIT_OK) ctx.io.out("Onboarding complete: Doctor service is installed.");
+	return code;
 }
 
 /**
@@ -264,8 +459,8 @@ async function runStartStop(ctx: CliContext, kind: "start" | "stop"): Promise<nu
 async function runUninstall(ctx: CliContext): Promise<number> {
 	const { io, colors, deps } = ctx;
 	if (deps.productUninstall === undefined) {
-		io.out(SERVICE_NOT_AVAILABLE);
-		return EXIT_OK;
+		io.err(SERVICE_NOT_AVAILABLE);
+		return EXIT_ERROR;
 	}
 	const u = deps.productUninstall;
 
@@ -302,7 +497,7 @@ async function runUninstall(ctx: CliContext): Promise<number> {
 	if (deps.lifecycle !== undefined) void deps.lifecycle.uninstalled();
 
 	const serviceResult = await u.serviceUninstall();
-	io.out(serviceResult.message);
+	io.out(redactLogSecrets(serviceResult.message));
 
 	const { registryEntryRemoved, stateDirRemoved } = u.removeState();
 	io.out(
@@ -338,7 +533,7 @@ async function runPurge(ctx: CliContext, parsed: ParsedArgs): Promise<number> {
 
 	if (!autoYes) {
 		io.out(colors.bold("`doctor purge` will PERMANENTLY remove:"));
-		for (const line of p.summaryLines()) io.out(`  - ${line}`);
+		for (const line of p.summaryLines()) io.out(redactLogSecrets(`  - ${line}`));
 		io.out("");
 
 		const interactive = ctx.isInteractive?.() ?? false;
@@ -359,11 +554,11 @@ async function runPurge(ctx: CliContext, parsed: ParsedArgs): Promise<number> {
 	}
 
 	const report = await p.run();
-	for (const line of report.lines) io.out(line);
+	for (const line of report.lines) io.out(redactLogSecrets(line));
 	return report.ok ? EXIT_OK : EXIT_ERROR;
 }
 
-/** `logs`: tail the local incident log. */
+/** `incidents`: Doctor's product-specific fleet incident records (legacy `logs --daemon`). */
 async function runLogs(ctx: CliContext, parsed: ParsedArgs): Promise<number> {
 	const { io, colors, deps } = ctx;
 	const limitRaw = parsed.flags["lines"];
@@ -378,13 +573,44 @@ async function runLogs(ctx: CliContext, parsed: ParsedArgs): Promise<number> {
 	const lines = await deps.tailIncidents(limit, daemonName);
 	if (lines.length === 0) {
 		if (daemonName !== undefined) {
-			io.out(colors.dim(`No incidents recorded yet for daemon "${daemonName}".`));
+			io.out(colors.dim(`No incidents recorded yet for daemon "${redactLogSecrets(daemonName)}".`));
 		} else {
 			io.out(colors.dim("No incidents recorded yet."));
 		}
 		return EXIT_OK;
 	}
-	for (const line of lines) io.out(line);
+	for (const line of lines) io.out(redactLogSecrets(line));
+	return EXIT_OK;
+}
+
+/** Canonical logs: hard-bound to Doctor's own authoritative service log. */
+async function runServiceLogs(ctx: CliContext, parsed: ParsedArgs): Promise<number> {
+	if (ctx.deps.tailServiceLogs === undefined) {
+		ctx.io.err("Doctor service log source is unavailable; no other product log was read.");
+		return EXIT_ERROR;
+	}
+	const args = optionArgv(parsed, new Set(Object.keys(GLOBAL_OPTIONS)));
+	const controller = new AbortController();
+	const stop = (): void => controller.abort();
+	process.once("SIGINT", stop);
+	try {
+		const result = await ctx.deps.tailServiceLogs(args, (line) => ctx.io.out(line.trimEnd()), controller.signal);
+		if (!result.ok) {
+			ctx.io.err(redactLogSecrets(result.error));
+			return EXIT_ERROR;
+		}
+		return EXIT_OK;
+	} finally {
+		process.removeListener("SIGINT", stop);
+	}
+}
+
+async function runTelemetry(ctx: CliContext): Promise<number> {
+	if (ctx.deps.telemetrySummary === undefined) {
+		ctx.io.err("Doctor telemetry state is unavailable.");
+		return EXIT_ERROR;
+	}
+	ctx.io.out(formatTelemetrySummary(ctx.deps.telemetrySummary()).trimEnd());
 	return EXIT_OK;
 }
 
@@ -410,18 +636,22 @@ async function route(command: CommandName, ctx: CliContext, parsed: ParsedArgs):
 		case "heal":
 			return runHeal(ctx, parsed);
 		case "restart":
-			return runRung(ctx, 1, false, parsed);
+			return runRestart(ctx);
 		case "reinstall":
 			return runRung(ctx, 2, true, parsed);
 		case "uninstall-hivemind":
 			return runUninstallHivemind(ctx, parsed);
 		case "update":
 			return runUpdate(ctx, parsed);
+		case "daemon-update":
+			return runDaemonUpdate(ctx, parsed);
 		case "self-update":
 			return runSelfUpdate(ctx);
-		case "install-service":
+		case "install":
+			return runInstall(ctx);
+		case "service-install":
 			return runService(ctx, "install");
-		case "uninstall-service":
+		case "service-uninstall":
 			return runService(ctx, "uninstall");
 		case "start":
 			return runStartStop(ctx, "start");
@@ -432,7 +662,11 @@ async function route(command: CommandName, ctx: CliContext, parsed: ParsedArgs):
 		case "purge":
 			return runPurge(ctx, parsed);
 		case "logs":
+			return runServiceLogs(ctx, parsed);
+		case "incidents":
 			return runLogs(ctx, parsed);
+		case "telemetry":
+			return runTelemetry(ctx);
 		case "help":
 			return runHelp(ctx);
 		default: {
@@ -449,33 +683,117 @@ async function route(command: CommandName, ctx: CliContext, parsed: ParsedArgs):
  * mapped to {@link EXIT_ERROR}).
  */
 export async function dispatch(argv: readonly string[], ctx: CliContext): Promise<number> {
-	const parsed = parseArgs(argv);
-	const command = resolveCommand(parsed.command);
+	let parsed = parseArgs(argv);
+	const resolution = resolveCommandDetailed(parsed.command);
+	const json = hasFlag(parsed, "json");
+	const invocationError = resolution === null
+		? (parsed.command === undefined ? validateBareInvocation(parsed) : null)
+		: validateInvocation(resolution.command, parsed);
+	if (invocationError !== null) return usageFailure(ctx, resolution?.command ?? "", invocationError, json);
 
-	// `--version` / `-v` / `-V` -> print just the version string and exit, BEFORE the
-	// bare-invocation banner fallback (otherwise `doctor --version` shows the banner).
-	if (hasFlag(parsed, "version") || argv.includes("-v") || argv.includes("-V")) {
-		ctx.io.out(DOCTOR_VERSION);
+	const shortVersionOnly = (parsed.command === "-v" || parsed.command === "-V") && parsed.positionals.length === 0;
+	if ((resolution !== null && hasFlag(parsed, "version")) || (parsed.command === undefined && hasFlag(parsed, "version")) || shortVersionOnly) {
+		ctx.io.out((json ? renderVersionJson("doctor", DOCTOR_VERSION) : renderVersion("doctor", DOCTOR_VERSION)).trimEnd());
 		return EXIT_OK;
 	}
 
-	// Bare invocation (no command) -> banner + menu (AC-064f.1).
-	if (command === null && parsed.command === undefined) {
-		return runHelp(ctx);
+	const shortHelpOnly = parsed.command === "-h" && parsed.positionals.length === 0;
+	if (resolution === null && (parsed.command === undefined || shortHelpOnly)) {
+		if (json) ctx.io.out(JSON.stringify({ product: "doctor", command: "help", ok: true, message: "help" }));
+		else return runHelp(ctx);
+		return EXIT_OK;
+	}
+	if (resolution !== null && (resolution.command === "help" || argv.includes("--help") || argv.includes("-h"))) {
+		if (json) ctx.io.out(JSON.stringify({ product: "doctor", command: "help", ok: true, message: "help" }));
+		else return runHelp(ctx);
+		return EXIT_OK;
 	}
 
-	// An UNKNOWN command token: print a short error + the menu, exit non-zero.
-	if (command === null) {
-		ctx.io.err(ctx.colors.red(`Unknown command: ${parsed.command ?? ""}`));
-		ctx.io.out(renderBannerWithMenu(ctx.colors));
-		return EXIT_ERROR;
+	if (resolution === null) {
+		const name = parsed.command ?? "";
+		const message = `Unknown command: ${name}. Run 'doctor --help' for usage.`;
+		if (json) ctx.io.out(JSON.stringify({ product: "doctor", command: name, ok: false, message }));
+		else ctx.io.err(ctx.colors.red(message));
+		return 2;
 	}
 
+	if (resolution.deprecatedAlias !== undefined && !json) {
+		ctx.io.err(`Warning: '${resolution.deprecatedAlias}' is deprecated; use '${resolution.command}'.`);
+	}
+
+	const command = resolution.command;
+	if (command === "uninstall" && !hasFlag(parsed, "yes")) {
+		const message = "Doctor uninstall requires confirmation; re-run with --yes in non-interactive use.";
+		if (json || !(ctx.isInteractive?.() ?? false)) {
+			if (json) ctx.io.out(JSON.stringify({ product: "doctor", command, ok: false, message }));
+			else ctx.io.err(message);
+			return 2;
+		}
+		if (!(await ctx.confirm("Remove Doctor's service and Doctor-owned state?"))) {
+			ctx.io.out("Doctor uninstall cancelled; no changes were made.");
+			return EXIT_OK;
+		}
+	}
+	if (!json) {
+		try {
+			return await route(command, ctx, parsed);
+		} catch (error) {
+			ctx.io.err(ctx.colors.red(redactLogSecrets(`Command failed: ${error instanceof Error ? error.message : "unknown error"}`)));
+			return EXIT_ERROR;
+		}
+	}
+
+	if (command === "logs" && !hasFlag(parsed, "no-follow")) {
+		parsed = { ...parsed, flags: { ...parsed.flags, "no-follow": true } };
+	}
+	if (command === "status") {
+		try {
+			const status = (await inspectStatus(ctx)).status;
+			ctx.io.out(JSON.stringify({ product: "doctor", command, ok: true, message: "Doctor status", status }));
+			return EXIT_OK;
+		} catch (error) {
+			const message = redactLogSecrets(error instanceof Error ? error.message : "Doctor status failed");
+			ctx.io.out(JSON.stringify({ product: "doctor", command, ok: false, message }));
+			return EXIT_ERROR;
+		}
+	}
+	if (command === "telemetry") {
+		try {
+			if (ctx.deps.telemetrySummary === undefined) throw new Error("Doctor telemetry state is unavailable.");
+			ctx.io.out(JSON.stringify({ product: "doctor", command, ok: true, message: "Doctor telemetry status", telemetry: ctx.deps.telemetrySummary() }));
+			return EXIT_OK;
+		} catch (error) {
+			const message = redactLogSecrets(error instanceof Error ? error.message : "Doctor telemetry status failed");
+			ctx.io.out(JSON.stringify({ product: "doctor", command, ok: false, message }));
+			return EXIT_ERROR;
+		}
+	}
+
+	const stdout: string[] = [];
+	const stderr: string[] = [];
+	const capturedCtx: CliContext = {
+		...ctx,
+		io: {
+			out: (text) => stdout.push(text),
+			err: (text) => stderr.push(text),
+		},
+		confirm: async () => false,
+		isInteractive: () => false,
+	};
 	try {
-		return await route(command, ctx, parsed);
+		const code = await route(command, capturedCtx, parsed);
+		const clean = [...stdout, ...stderr].join("\n").replace(/\u001b(?:\[[0-?]*[ -/]*[@-~]|\][^\u0007]*(?:\u0007|\u001b\\)?)/gu, "").trim();
+		ctx.io.out(JSON.stringify({
+			product: "doctor",
+			command,
+			ok: code === EXIT_OK,
+			message: clean || (code === EXIT_OK ? `${command} completed.` : `${command} failed.`),
+			...(command === "logs" ? { lines: stdout.flatMap((line) => line.split(/\r?\n/u)).filter(Boolean) } : {}),
+		}));
+		return code;
 	} catch (error) {
-		// Crash-safe: a handler error is reported, never a thrown stack trace (parent AC-8).
-		ctx.io.err(ctx.colors.red(`Command failed: ${error instanceof Error ? error.message : "unknown error"}`));
+		const message = redactLogSecrets(error instanceof Error ? error.message : "unknown error");
+		ctx.io.out(JSON.stringify({ product: "doctor", command, ok: false, message }));
 		return EXIT_ERROR;
 	}
 }

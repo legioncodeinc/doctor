@@ -5,7 +5,7 @@
  * scripted confirm, spy-able deps). No process is spawned, no network/npm/daemon touched.
  */
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { dispatch, EXIT_OK, EXIT_DECLINED, EXIT_ERROR } from "../../src/cli/dispatch.js";
 import { buildCliHarness, fakeLadder } from "./helpers/fake-cli.js";
@@ -19,10 +19,10 @@ describe("dispatch (PRD-064f)", () => {
 
 			expect(code).toBe(EXIT_OK);
 			const text = h.out.text();
-			// The attribution banner carries both wordmarks.
-			expect(text).toContain("LEGION CODE INC.");
-			expect(text).toContain("ACTIVELOOP");
-			expect(text).toContain("Doctor");
+			// Shared anatomy owns the sole exact credit; product art contains no partner prose.
+			expect(text.match(/Legion Code Inc\. x Activeloop/gu)).toHaveLength(1);
+			expect(text).not.toContain("LEGION CODE INC.");
+			expect(text).toContain("DOCTOR");
 			// The menu: a sampling of commands must be listed.
 			expect(text).toContain("status");
 			expect(text).toContain("diagnose");
@@ -63,11 +63,11 @@ describe("dispatch (PRD-064f)", () => {
 			const text = h.out.text();
 			expect(text).toContain("Daemon health:");
 			expect(text).toContain("degraded");
-			expect(text).toContain("Doctor service:");
+			expect(text).toContain("Process:");
 			expect(text).toContain("running");
 			expect(text).toContain("Daemon version:");
 			expect(text).toContain("1.2.3");
-			expect(text).toContain("Doctor version:");
+			expect(text).toContain("Product: DOCTOR");
 			expect(text).toContain("9.9.9-test");
 			expect(text).toContain("Last heal:");
 			expect(text).toContain("2026-06-27T00:00:00.000Z");
@@ -196,8 +196,8 @@ describe("dispatch (PRD-064f)", () => {
 		it("`clear-credentials` is NOT a known command (deferred, OD-4)", async () => {
 			const h = buildCliHarness();
 			const code = await dispatch(["clear-credentials"], h.ctx);
-			// Unknown command -> error exit + the menu, never a credential action.
-			expect(code).toBe(EXIT_ERROR);
+			// Shared CLI contract: unknown/usage errors return 2.
+			expect(code).toBe(2);
 			expect(h.out.errText()).toContain("Unknown command: clear-credentials");
 		});
 	});
@@ -210,7 +210,7 @@ describe("dispatch (PRD-064f)", () => {
 			expect(h.selfUpdate).toHaveBeenCalledTimes(1);
 		});
 
-		it("NO other command calls self-update", async () => {
+		it("only canonical update and its legacy self-update alias call the Doctor updater", async () => {
 			// Run every other known command and assert self-update is never invoked.
 			const otherCommands = [
 				"status",
@@ -219,7 +219,7 @@ describe("dispatch (PRD-064f)", () => {
 				"restart",
 				"reinstall",
 				"uninstall-hivemind",
-				"update",
+				"daemon-update",
 				"install-service",
 				"uninstall-service",
 				"logs",
@@ -236,16 +236,16 @@ describe("dispatch (PRD-064f)", () => {
 			}
 		});
 
-		it("`update` (primary) does not call self-update; it calls the primary update action", async () => {
+		it("canonical `update` calls Doctor's own updater", async () => {
 			const h = buildCliHarness();
 			await dispatch(["update"], h.ctx);
-			expect(h.applyPrimaryUpdate).toHaveBeenCalledTimes(1);
-			expect(h.selfUpdate).not.toHaveBeenCalled();
+			expect(h.applyPrimaryUpdate).not.toHaveBeenCalled();
+			expect(h.selfUpdate).toHaveBeenCalledTimes(1);
 		});
 
-		it("`update --check` previews without applying and never self-updates", async () => {
+		it("`daemon-update --check` preserves the legacy primary-daemon preview", async () => {
 			const h = buildCliHarness();
-			await dispatch(["update", "--check"], h.ctx);
+			await dispatch(["daemon-update", "--check"], h.ctx);
 			expect(h.checkPrimaryUpdate).toHaveBeenCalledTimes(1);
 			expect(h.applyPrimaryUpdate).not.toHaveBeenCalled();
 			expect(h.selfUpdate).not.toHaveBeenCalled();
@@ -277,11 +277,11 @@ describe("dispatch (PRD-064f)", () => {
 	});
 
 	describe("service stubs + restart + logs", () => {
-		it("install-service prints 'not yet available' when 064b is not wired", async () => {
+		it("service-install fails closed when the service adapter is not wired", async () => {
 			const h = buildCliHarness();
 			const code = await dispatch(["install-service"], h.ctx);
-			expect(code).toBe(EXIT_OK);
-			expect(h.out.text()).toContain("not yet available");
+			expect(code).toBe(EXIT_ERROR);
+			expect(h.out.errText()).toContain("not yet available");
 		});
 
 		it("install-service delegates to the 064b module when wired", async () => {
@@ -295,23 +295,52 @@ describe("dispatch (PRD-064f)", () => {
 			expect(h.out.text()).toContain("service registered");
 		});
 
-		it("restart (rung 1) runs without a confirm gate", async () => {
+		it("restart fails closed instead of delegating to the supervised-daemon rung", async () => {
 			const ladder = fakeLadder({ runResult: { ok: true, action: "restart-daemon" } });
 			const h = buildCliHarness({ ladder, classification: { kind: "unreachable-refused", detail: "x" } });
 			const code = await dispatch(["restart"], h.ctx);
 			expect(h.confirmSpy).not.toHaveBeenCalled();
-			expect(ladder.runCalls).toEqual([1]);
-			expect(code).toBe(EXIT_OK);
+			expect(ladder.runCalls).toEqual([]);
+			expect(code).toBe(EXIT_ERROR);
+			expect(h.out.errText()).toContain("restart was not attempted");
+		});
+
+		it("canonical logs fails closed and never falls back to fleet incidents", async () => {
+			const h = buildCliHarness({ incidents: ['{"source":"hive"}'] });
+			const code = await dispatch(["logs", "--no-follow"], h.ctx);
+			expect(code).toBe(EXIT_ERROR);
+			expect(h.out.errText()).toContain("no other product log was read");
+			expect(h.out.text()).not.toContain('"source":"hive"');
+		});
+
+		it("canonical logs uses only the injected Doctor service-log adapter", async () => {
+			const tailServiceLogs = vi.fn(async (_argv, write: (line: string) => void) => {
+				write("doctor-only\n");
+				return { ok: true as const };
+			});
+			const h = buildCliHarness({ tailServiceLogs, incidents: ["fleet-incident"] });
+			expect(await dispatch(["logs", "--no-follow"], h.ctx)).toBe(EXIT_OK);
+			expect(tailServiceLogs).toHaveBeenCalledTimes(1);
+			expect(h.out.text()).toContain("doctor-only");
+			expect(h.out.text()).not.toContain("fleet-incident");
 		});
 
 		it("logs prints recent incident lines, or a friendly empty message", async () => {
 			const withLines = buildCliHarness({ incidents: ['{"id":"a"}', '{"id":"b"}'] });
-			await dispatch(["logs"], withLines.ctx);
+			await dispatch(["incidents"], withLines.ctx);
 			expect(withLines.out.text()).toContain('{"id":"a"}');
 
 			const empty = buildCliHarness({ incidents: [] });
-			await dispatch(["logs"], empty.ctx);
+			await dispatch(["incidents"], empty.ctx);
 			expect(empty.out.text()).toContain("No incidents recorded yet.");
+		});
+
+		it("redacts secrets and terminal controls from product-specific incident output", async () => {
+			const h = buildCliHarness({ incidents: ["Authorization: Bearer secret-token\u001b]0;owned\u0007"] });
+			expect(await dispatch(["incidents"], h.ctx)).toBe(EXIT_OK);
+			expect(h.out.text()).toContain("Authorization: [REDACTED]");
+			expect(h.out.text()).not.toContain("secret-token");
+			expect(h.out.text()).not.toContain("\u001b");
 		});
 
 		it("b-AC-6: logs --daemon filters to one daemon stream", async () => {
@@ -321,7 +350,7 @@ describe("dispatch (PRD-064f)", () => {
 					hive: ['{"id":"t1"}'],
 				},
 			});
-			const code = await dispatch(["logs", "--daemon", "hive"], h.ctx);
+			const code = await dispatch(["incidents", "--daemon", "hive"], h.ctx);
 			expect(code).toBe(EXIT_OK);
 			const text = h.out.text();
 			expect(text).toContain('{"id":"t1"}');
@@ -335,7 +364,7 @@ describe("dispatch (PRD-064f)", () => {
 					hive: ['{"id":"t1"}'],
 				},
 			});
-			const code = await dispatch(["logs"], h.ctx);
+			const code = await dispatch(["incidents"], h.ctx);
 			expect(code).toBe(EXIT_OK);
 			const text = h.out.text();
 			expect(text).toContain('[honeycomb] {"id":"h1"}');

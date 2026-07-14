@@ -1,86 +1,90 @@
-/**
- * The single-sourced Doctor command surface (PRD-064f Scope command table).
- *
- * ONE list defines every command name, its menu summary, and the canonical set of
- * known commands. The dispatcher ({@link file://./dispatch.ts}) and the banner menu
- * ({@link file://./banner.ts}) both read this list, so the menu can never drift from
- * what actually dispatches.
- *
- * Binding rulings encoded here (PRD-064 Decisions, OD-4):
- *   - There is NO `clear-credentials` command. Credential purge is DEFERRED, not in v1;
- *     it is only ever RECOMMENDED via escalation, never offered as a command (AC-064f.4).
- *   - `self-update` is the ONLY command that updates Doctor's own package (AC-064f.5).
- *
- * Pure data + a tiny lookup; no I/O. Built-ins only.
- */
+import {
+	composeProductManifest,
+	resolveCommand as resolveManifestCommand,
+	type CommandSpec,
+	type ProductManifest,
+} from "@legioncodeinc/cli-kit";
 
-/** Every command Doctor's CLI dispatches. The string union is the closed set. */
 export type CommandName =
-	| "run"
-	| "status"
-	| "diagnose"
-	| "heal"
-	| "restart"
-	| "reinstall"
-	| "uninstall-hivemind"
-	| "update"
-	| "self-update"
-	| "install-service"
-	| "uninstall-service"
 	| "start"
 	| "stop"
-	| "uninstall"
-	| "purge"
+	| "restart"
+	| "status"
 	| "logs"
+	| "install"
+	| "uninstall"
+	| "service-install"
+	| "service-uninstall"
+	| "update"
+	| "telemetry"
+	| "run"
+	| "diagnose"
+	| "heal"
+	| "reinstall"
+	| "uninstall-hivemind"
+	| "daemon-update"
+	| "self-update"
+	| "purge"
+	| "incidents"
 	| "help";
 
-/** One row of the command menu (name + one-line summary). */
+type ProductCommand = Omit<CommandSpec, "group">;
+
+const productCommand = (
+	name: CommandName,
+	summary: string,
+	destructive = false,
+): ProductCommand => ({ name, summary, destructive, idempotent: !destructive, json: true });
+
+const PRODUCT_COMMANDS: readonly ProductCommand[] = [
+	productCommand("run", "Run the watchdog service entry"),
+	productCommand("diagnose", "Classify supervised-service health without changing it"),
+	productCommand("heal", "Run the remediation ladder once"),
+	productCommand("reinstall", "Reinstall the supervised primary daemon", true),
+	productCommand("uninstall-hivemind", "Remove a conflicting Hivemind package", true),
+	productCommand("daemon-update", "Update the supervised primary daemon"),
+	productCommand("self-update", "Deprecated alias for the canonical update command"),
+	productCommand("purge", "Remove all Apiary products and state", true),
+	productCommand("incidents", "Read Doctor's fleet incident records"),
+	productCommand("help", "Show this help"),
+];
+
+/** Shared baseline plus Doctor-only commands. Doctor intentionally omits register. */
+export const DOCTOR_MANIFEST: ProductManifest = composeProductManifest("doctor", PRODUCT_COMMANDS);
+
 export interface CommandMenuEntry {
-	/** How the command is invoked on the menu (the bare command name). */
 	readonly invocation: CommandName;
-	/** A one-line summary shown in the menu. */
 	readonly summary: string;
 }
 
-/**
- * The command menu, in display order. This is the dispatch surface and the menu surface.
- * Deliberately ABSENT: `clear-credentials` (deferred, OD-4 / AC-064f.4).
- */
-export const COMMAND_MENU: readonly CommandMenuEntry[] = [
-	{ invocation: "run", summary: "Run the supervised watchdog (the OS service entry; not for manual use)." },
-	{ invocation: "status", summary: "Daemon health, service state, versions, last heal, opt-out flags." },
-	{ invocation: "diagnose", summary: "Classify health and print the recommended fix - takes no action." },
-	{ invocation: "heal", summary: "Run the remediation ladder once (gated steps confirm)." },
-	{ invocation: "restart", summary: "Restart the primary daemon (rung 1)." },
-	{ invocation: "reinstall", summary: "Reinstall the primary daemon (rung 2)." },
-	{ invocation: "uninstall-hivemind", summary: "Remove a conflicting @deeplake/hivemind global (rung 3, confirms)." },
-	{ invocation: "update", summary: "Update the primary daemon via the blessed gate (--check to preview)." },
-	{ invocation: "self-update", summary: "Update Doctor's own package (the ONLY path that does)." },
-	{ invocation: "install-service", summary: "Register Doctor as an OS service (064b)." },
-	{ invocation: "uninstall-service", summary: "Unregister the Doctor OS service (064b)." },
-	{ invocation: "start", summary: "Start Doctor's own watchdog service (PRD-003b)." },
-	{ invocation: "stop", summary: "Stop Doctor's own watchdog service (PRD-003b)." },
-	{
-		invocation: "uninstall",
-		summary: "Remove Doctor's service, registry entry, and state dir (keeps the npm package; PRD-003b).",
-	},
-	{
-		invocation: "purge",
-		summary: "DESTRUCTIVE: wipe every Apiary service, package, and state dir on this machine, Doctor last (PRD-003c).",
-	},
-	{ invocation: "logs", summary: "Tail incident logs for all daemons, or one via --daemon <name>." },
-	{ invocation: "help", summary: "Show this banner and command menu." },
-];
+/** Compatibility export retained for callers which inspect the old menu constant. */
+export const COMMAND_MENU: readonly CommandMenuEntry[] = DOCTOR_MANIFEST.commands.map((entry) => ({
+	invocation: entry.name as CommandName,
+	summary: entry.summary,
+}));
 
-/** The set of known command names, derived from the menu so it cannot drift. */
-export const KNOWN_COMMANDS: ReadonlySet<string> = new Set(COMMAND_MENU.map((e) => e.invocation));
+export const KNOWN_COMMANDS: ReadonlySet<string> = new Set([
+	...DOCTOR_MANIFEST.commands.flatMap((entry) => [entry.name, ...(entry.aliases?.map(({ name }) => name) ?? [])]),
+	"help",
+]);
 
-/**
- * Resolve a raw first-arg token to a {@link CommandName}, or null when unknown.
- * `undefined`/empty (bare invocation) resolves to null so the caller renders the banner.
- */
-export function resolveCommand(token: string | undefined): CommandName | null {
+export interface ResolvedDoctorCommand {
+	readonly command: CommandName;
+	readonly deprecatedAlias?: string;
+}
+
+export function resolveCommandDetailed(token: string | undefined): ResolvedDoctorCommand | null {
 	if (token === undefined || token.trim() === "") return null;
-	const t = token.trim();
-	return KNOWN_COMMANDS.has(t) ? (t as CommandName) : null;
+	if (token === "help") return { command: "help" };
+	const resolution = resolveManifestCommand(DOCTOR_MANIFEST, token.trim());
+	if (!resolution.ok) return null;
+	return {
+		command: resolution.canonicalName as CommandName,
+		...(resolution.deprecatedAlias === undefined ? {} : { deprecatedAlias: resolution.deprecatedAlias }),
+	};
+}
+
+/** Legacy lookup shape retained for existing Doctor integrations. */
+export function resolveCommand(token: string | undefined): CommandName | null {
+	return resolveCommandDetailed(token)?.command ?? null;
 }

@@ -48,7 +48,7 @@ describe("renderLaunchdPlist (macOS)", () => {
 
 	it("writes logs under the fleet root doctor state dir (no root required)", () => {
 		// ADR-0003 (PRD-004a): doctor's state moved from ~/.honeycomb/doctor to <root>/doctor.
-		expect(xml).toContain("/Users/t/.apiary/doctor/launchd.out.log");
+		expect(xml).toContain("/Users/t/.apiary/doctor/service.log");
 	});
 });
 

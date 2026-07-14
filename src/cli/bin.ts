@@ -24,18 +24,30 @@
 
 import { runCli } from "./index.js";
 import { finalizeOneShot, isOneShot } from "./shutdown.js";
+import { resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 
-const argv = process.argv.slice(2);
-const code = await runCli(argv);
+// Programmatic conformance tests may import the packed artifact and inject a hermetic
+// context into the real dispatcher. Importing the executable must never run production
+// assembly as a side effect; direct bin execution remains the only path into runCli.
+export { dispatch } from "./dispatch.js";
 
-if (!isOneShot(argv)) {
-	// The `run` watchdog already stopped its own loops; exit plainly (do NOT run the one-shot
-	// fetch-pool teardown - the service lifecycle owns this process's shutdown).
-	process.exit(code);
+const invokedPath = process.argv[1];
+const directlyInvoked = invokedPath !== undefined && import.meta.url === pathToFileURL(resolve(invokedPath)).href;
+
+if (directlyInvoked) {
+	const argv = process.argv.slice(2);
+	const code = await runCli(argv);
+
+	if (!isOneShot(argv)) {
+		// The `run` watchdog already stopped its own loops; exit plainly (do NOT run the one-shot
+		// fetch-pool teardown - the service lifecycle owns this process's shutdown).
+		process.exit(code);
+	}
+
+	// One-shot path: tear down the fetch connection pool, release lingering handles, set the exit
+	// code, and let the process exit naturally (a bounded backstop force-exits only if the loop
+	// refuses to drain). Calling process.exit() directly here is what trips the Windows
+	// UV_HANDLE_CLOSING assertion, so the happy path never forces it.
+	await finalizeOneShot(code);
 }
-
-// One-shot path: tear down the fetch connection pool, release lingering handles, set the exit
-// code, and let the process exit naturally (a bounded backstop force-exits only if the loop
-// refuses to drain). Calling process.exit() directly here is what trips the Windows
-// UV_HANDLE_CLOSING assertion, so the happy path never forces it.
-await finalizeOneShot(code);

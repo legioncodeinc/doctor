@@ -156,6 +156,39 @@ function lastNonEmptyLine(text: string): string | null {
 	return lines.length > 0 ? (lines[lines.length - 1] ?? null) : null;
 }
 
+function isAlreadyAbsentFailure(result: CommandResult | null): boolean {
+	if (result === null) return false;
+	const text = `${result.detail ?? ""}\n${result.stderr}\n${result.stdout}`.toLowerCase();
+	return /not found|does not exist|not loaded|not installed|not (?:currently )?running|cannot find|could not find|no such (?:file|unit|service|task)|267011/u.test(text);
+}
+
+function isInstallReconciliationSuccess(command: ServiceCommand, result: CommandResult): boolean {
+	const text = `${result.detail ?? ""}\n${result.stderr}\n${result.stdout}`.toLowerCase();
+	if (command.command === "schtasks" && command.args[0]?.toLowerCase() === "/end") {
+		return isAlreadyAbsentFailure(result);
+	}
+	if (command.command === "launchctl" && command.args[0] === "bootout") return isAlreadyAbsentFailure(result);
+	if (command.command === "launchctl" && command.args[0] === "bootstrap") {
+		return /already (?:loaded|bootstrapped)|service already exists/u.test(text);
+	}
+	if (command.command === "sc" && command.args[0] === "create") {
+		return /already exists|1073/u.test(text);
+	}
+	if ((command.command === "sc" && command.args[0] === "start") ||
+		(command.command === "schtasks" && command.args[0]?.toLowerCase() === "/run")) {
+		return /already running|1056/u.test(text);
+	}
+	return false;
+}
+
+/** An explicit stop is idempotent when the manager reports the requested stopped state. */
+function isStopReconciliationSuccess(command: ServiceCommand, result: CommandResult): boolean {
+	if (command.command === "schtasks" && command.args[0]?.toLowerCase() === "/end") {
+		return isAlreadyAbsentFailure(result);
+	}
+	return false;
+}
+
 /**
  * Run an ordered list of commands, stopping at nothing (every result is recorded) but
  * reporting the first hard failure (and its result, for {@link describeFailure}). Never
@@ -165,12 +198,13 @@ function lastNonEmptyLine(text: string): string | null {
 async function runAll(
 	runner: CommandRunner,
 	commands: readonly ServiceCommand[],
+	tolerate: (command: ServiceCommand, result: CommandResult) => boolean = () => false,
 ): Promise<{ allOk: boolean; firstFailure: ServiceCommand | null; firstFailureResult: CommandResult | null }> {
 	let firstFailure: ServiceCommand | null = null;
 	let firstFailureResult: CommandResult | null = null;
 	for (const cmd of commands) {
 		const result = await runner.run(cmd.command, cmd.args, { timeoutMs: SERVICE_COMMAND_TIMEOUT_MS });
-		if (!result.ok && firstFailure === null) {
+		if (!result.ok && !tolerate(cmd, result) && firstFailure === null) {
 			firstFailure = cmd;
 			firstFailureResult = result;
 		}
@@ -263,7 +297,11 @@ export function createServiceModule(deps: ServiceModuleDeps): FullServiceModule 
 
 			// 2) Run the manager's install argv. For schtasks the staged file path is the unit path.
 			const planForArgv: ServicePlan = unitTarget === p.unitPath ? p : { ...p, unitPath: unitTarget };
-			const { allOk, firstFailure, firstFailureResult } = await runAll(runner, installCommands(planForArgv, uid));
+			const { allOk, firstFailure, firstFailureResult } = await runAll(
+				runner,
+				installCommands(planForArgv, uid),
+				isInstallReconciliationSuccess,
+			);
 			if (!allOk) {
 				// A manager-command failure (e.g. schtasks /Create rejecting invalid XML) is NOT a
 				// successful install: surface ok:false so the CLI maps it to a non-zero exit (IRD-192 AC-6).
@@ -294,7 +332,11 @@ export function createServiceModule(deps: ServiceModuleDeps): FullServiceModule 
 			}
 
 			// 1) Stop + deregister via the manager (idempotent - a missing unit is tolerated).
-			const { allOk, firstFailure, firstFailureResult } = await runAll(runner, uninstallCommands(p, uid));
+			const { allOk, firstFailure, firstFailureResult } = await runAll(
+				runner,
+				uninstallCommands(p, uid),
+				isStopReconciliationSuccess,
+			);
 
 			// 2) Delete the unit file so it cannot resurrect on next boot (AC-064b.5). For schtasks the
 			//    staged XML lives beside the workspace; remove that too.
@@ -308,6 +350,13 @@ export function createServiceModule(deps: ServiceModuleDeps): FullServiceModule 
 				});
 			}
 
+			if (!allOk && isAlreadyAbsentFailure(firstFailureResult)) {
+				logger.info("service.already_uninstalled", { manager: p.manager, scope: p.scope });
+				return {
+					ok: true,
+					message: `Doctor service was already gone (${p.manager}, ${scopePhrase(p)}): ${describeFailure(firstFailureResult)}.`,
+				};
+			}
 			if (!allOk) {
 				const detail = describeFailure(firstFailureResult);
 				logger.warn("service.uninstall_command_failed", { command: firstFailure?.command, detail });
@@ -333,13 +382,17 @@ export function createServiceModule(deps: ServiceModuleDeps): FullServiceModule 
 					message: `Could not start the Doctor service: ${error instanceof Error ? error.message : "unknown error"}.`,
 				};
 			}
-			const { allOk, firstFailure, firstFailureResult } = await runAll(runner, startCommands(p, uid));
+			const { allOk, firstFailure, firstFailureResult } = await runAll(
+				runner,
+				startCommands(p, uid),
+				isInstallReconciliationSuccess,
+			);
 			if (!allOk) {
 				const detail = describeFailure(firstFailureResult);
 				logger.warn("service.start_command_failed", { command: firstFailure?.command, detail });
 				return {
 					ok: false,
-					message: `Could not start the Doctor service (${firstFailure?.command ?? "unknown"}): ${detail}. Is it registered? Run \`doctor install-service\` first.`,
+					message: `Could not start the Doctor service (${firstFailure?.command ?? "unknown"}): ${detail}. Is it registered? Run \`doctor service-install\` first.`,
 				};
 			}
 			logger.info("service.started", { manager: p.manager, scope: p.scope });
@@ -356,7 +409,11 @@ export function createServiceModule(deps: ServiceModuleDeps): FullServiceModule 
 					message: `Could not stop the Doctor service: ${error instanceof Error ? error.message : "unknown error"}.`,
 				};
 			}
-			const { allOk, firstFailure, firstFailureResult } = await runAll(runner, stopCommands(p, uid));
+			const { allOk, firstFailure, firstFailureResult } = await runAll(
+				runner,
+				stopCommands(p, uid),
+				isStopReconciliationSuccess,
+			);
 			if (!allOk) {
 				const detail = describeFailure(firstFailureResult);
 				logger.warn("service.stop_command_failed", { command: firstFailure?.command, detail });
@@ -391,12 +448,16 @@ export async function serviceStart(deps: ServiceModuleDeps): Promise<ServiceResu
 			message: `Could not start the Doctor service: ${error instanceof Error ? error.message : "unknown error"}.`,
 		};
 	}
-	const { allOk, firstFailure, firstFailureResult } = await runAll(runner, startCommands(p, uid));
+	const { allOk, firstFailure, firstFailureResult } = await runAll(
+		runner,
+		startCommands(p, uid),
+		isInstallReconciliationSuccess,
+	);
 	if (!allOk) {
 		const detail = describeFailure(firstFailureResult);
 		return {
 			ok: false,
-			message: `Could not start the Doctor service (${firstFailure?.command ?? "unknown"}): ${detail}. Is it registered? Run \`doctor install-service\` first.`,
+			message: `Could not start the Doctor service (${firstFailure?.command ?? "unknown"}): ${detail}. Is it registered? Run \`doctor service-install\` first.`,
 		};
 	}
 	return { ok: true, message: `Doctor service started (${p.manager}, ${scopePhrase(p)}).` };
@@ -419,7 +480,11 @@ export async function serviceStop(deps: ServiceModuleDeps): Promise<ServiceResul
 			message: `Could not stop the Doctor service: ${error instanceof Error ? error.message : "unknown error"}.`,
 		};
 	}
-	const { allOk, firstFailure, firstFailureResult } = await runAll(runner, stopCommands(p, uid));
+	const { allOk, firstFailure, firstFailureResult } = await runAll(
+		runner,
+		stopCommands(p, uid),
+		isStopReconciliationSuccess,
+	);
 	if (!allOk) {
 		const detail = describeFailure(firstFailureResult);
 		return { ok: false, message: `Could not stop the Doctor service (${firstFailure?.command ?? "unknown"}): ${detail}.` };
@@ -454,6 +519,12 @@ export async function serviceStatus(deps: ServiceModuleDeps): Promise<ServiceSta
 	// systemd is-active prints "active"; launchctl print / schtasks query / sc query a populated block.
 	if (p.manager === "systemd") {
 		return /\bactive\b/.test(result.stdout) && !/inactive|failed/.test(result.stdout) ? "running" : "not-running";
+	}
+	if (p.manager === "schtasks") {
+		return /\b(?:status\s*:\s*)?running\b/iu.test(result.stdout) ? "running" : "not-running";
+	}
+	if (p.manager === "sc") {
+		return /\b(?:state\s*:\s*\d+\s+)?running\b/iu.test(result.stdout) ? "running" : "not-running";
 	}
 	return "running";
 }
@@ -528,12 +599,15 @@ export async function isServiceRegistered(deps: ServiceModuleDeps): Promise<bool
 			return true;
 		}
 	}
-	// schtasks / sc: serviceStatus()'s own "unknown" already means "ambiguous" (a spawn/ENOENT
-	// error), and its "running" already means the query succeeded (registered, regardless of
-	// activity) - only its clean "not-running" means the manager confidently reported no such
-	// task/service, i.e. genuinely unregistered.
-	const status = await serviceStatus(deps);
-	return status !== "not-running";
+	// schtasks / sc: registration is the query's success, independent of whether its parsed
+	// runtime state is Ready/Stopped/Running. Spawn ambiguity biases toward registered.
+	const runner = deps.runner ?? createExecFileRunner();
+	const uid = deps.uid ?? liveUid();
+	const cmd = statusCommand(p, uid);
+	const result = await runner.run(cmd.command, cmd.args, { timeoutMs: SERVICE_COMMAND_TIMEOUT_MS });
+	if (result.ok) return true;
+	if (result.detail !== undefined && /ENOENT|spawn/iu.test(result.detail)) return true;
+	return false;
 }
 
 export { resolveServicePlan, resolveServiceContext } from "./platform.js";

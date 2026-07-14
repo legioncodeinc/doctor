@@ -47,7 +47,7 @@ function isEnvOptOut(raw: string | undefined): boolean {
 }
 
 /**
- * Decide whether the Doctor bootstrap (npm install + `doctor install-service`) should
+ * Decide whether the Doctor bootstrap (npm install + `doctor service-install`) should
  * run. Returns `false` when the user opted out via the flag or the env equivalent (canonical
  * or pre-rename spelling); `true` (the default) otherwise. The env value is treated as opt-out
  * when it is "1" or "true" (case-insensitive), matching the daemon's other env-boolean

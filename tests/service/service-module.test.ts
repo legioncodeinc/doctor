@@ -15,6 +15,7 @@ import {
 	serviceStatus,
 	serviceStop,
 } from "../../src/service/index.js";
+import { encodeWindowsCleanupPath } from "../../src/service/argv.js";
 import { SERVICE_LABEL } from "../../src/service/platform.js";
 import { createMemoryFs, createRecordingRunner, fixedEnv } from "./helpers.js";
 
@@ -69,7 +70,9 @@ describe("install - writes the unit file then runs the manager argv", () => {
 		expect(runner.calls[0]?.command).toBe("launchctl");
 		expect(runner.calls[0]?.args[0]).toBe("bootout");
 		expect(runner.calls[0]?.args[1]).toContain("com.legioncode.hivedoctor");
-		expect(runner.calls[1]?.args[0]).toBe("bootstrap");
+		// Current-label bootout reconciles an already-loaded job before the new plist is loaded.
+		expect(runner.calls[1]?.args).toEqual(["bootout", `gui/0/${SERVICE_LABEL}`]);
+		expect(runner.calls[2]?.args[0]).toBe("bootstrap");
 		expect(result.ok).toBe(true);
 	});
 
@@ -91,17 +94,23 @@ describe("install - writes the unit file then runs the manager argv", () => {
 		// IRD-192 AC-2: the staged XML carries the Task-Scheduler-valid PT1M interval.
 		expect(fs.files.get(staged)).toContain("<Interval>PT1M</Interval>");
 		expect(fs.files.get(staged)).toContain("<Task ");
-		// Decision #32 migration: the legacy task name is deleted first, then the LogonTrigger/
-		// Principal UserId is probed (whoami), then /Create runs.
+		// Decision #32 migration runs first, then identity is probed. Reconciliation ends
+		// the tracked task and kills only an exact orphaned Doctor child before /Create.
 		expect(runner.calls[0]).toEqual({
 			command: "schtasks",
 			args: ["/Delete", "/TN", "HiveDoctor", "/F"],
 		});
 		expect(runner.calls[1]?.command).toBe("C:\\Windows\\System32\\whoami.exe");
-		expect(runner.calls[2]).toEqual({
+		expect(runner.calls[2]).toEqual({ command: "schtasks", args: ["/End", "/TN", "doctor"] });
+		expect(runner.calls[3]?.command).toContain("WindowsPowerShell");
+		expect(runner.calls[3]?.args.slice(-2)).toEqual([
+			encodeWindowsCleanupPath("C:\\bin\\doctor.cmd"), encodeWindowsCleanupPath(process.execPath),
+		]);
+		expect(runner.calls[4]).toEqual({
 			command: "schtasks",
 			args: ["/Create", "/XML", staged, "/TN", "doctor", "/F"],
 		});
+		expect(runner.calls[5]).toEqual({ command: "schtasks", args: ["/Run", "/TN", "doctor"] });
 		expect(result.ok).toBe(true);
 	});
 
@@ -287,6 +296,55 @@ describe("install - writes the unit file then runs the manager argv", () => {
 		expect(result.message).not.toContain(longLine);
 	});
 
+	it("macOS: already-absent bootout is tolerated and fixed argv still reloads and starts", async () => {
+		const runner = createRecordingRunner((command, args) =>
+			command === "launchctl" && args[0] === "bootout" && String(args[1]).includes(SERVICE_LABEL)
+				? { ok: false, code: 3, stdout: "", stderr: "Could not find service" }
+				: { ok: true, code: 0, stdout: "", stderr: "" },
+		);
+		const module = createServiceModule({
+			execPath: "/opt/doctor",
+			runner,
+			fs: createMemoryFs(),
+			environment: fixedEnv({ platform: "darwin", home: "/Users/t" }),
+		});
+		expect((await module.install()).ok).toBe(true);
+		expect(runner.calls.slice(-3).map(({ args }) => args[0])).toEqual(["bootout", "bootstrap", "kickstart"]);
+	});
+
+	it("Windows sc: already-existing and already-running results reconcile through config", async () => {
+		const runner = createRecordingRunner((command, args) => {
+			if (command === "sc" && args[0] === "create") return { ok: false, code: 1073, stdout: "", stderr: "service already exists" };
+			if (command === "sc" && args[0] === "start") return { ok: false, code: 1056, stdout: "", stderr: "service already running" };
+			return { ok: true, code: 0, stdout: "", stderr: "" };
+		});
+		const module = createServiceModule({
+			execPath: "C:\\bin\\doctor.cmd",
+			runner,
+			fs: createMemoryFs(),
+			environment: fixedEnv({ platform: "win32", privileged: true, preferSystemScope: true }),
+		});
+		expect((await module.install()).ok).toBe(true);
+		expect(runner.calls.some(({ command, args }) => command === "sc" && args[0] === "config")).toBe(true);
+	});
+
+	it("Windows Scheduled Task: /F reconciles the definition and already-running is success", async () => {
+		const runner = createRecordingRunner((command, args) =>
+			command === "schtasks" && args[0] === "/Run"
+				? { ok: false, code: 1, stdout: "", stderr: "The task is already running" }
+				: { ok: true, code: 0, stdout: "", stderr: "" },
+		);
+		const module = createServiceModule({
+			execPath: "C:\\bin\\doctor.cmd",
+			runner,
+			fs: createMemoryFs(),
+			environment: fixedEnv({ platform: "win32", home: "C:\\Users\\t", execPath: "C:\\bin\\doctor.cmd" }),
+			windowsIdentity: { systemRoot: "C:\\Windows" },
+		});
+		expect((await module.install()).ok).toBe(true);
+		expect(runner.calls.some(({ command, args }) => command === "schtasks" && args.includes("/F"))).toBe(true);
+	});
+
 	it("an unsupported platform returns a clean message, never throws", async () => {
 		const module = createServiceModule({
 			execPath: "/x",
@@ -332,12 +390,17 @@ describe("uninstall - deregisters then removes the unit file (AC-064b.5)", () =>
 			execPath: "C:\\bin\\doctor.cmd",
 			runner,
 			fs,
-			environment: fixedEnv({ platform: "win32", home: "C:\\Users\\t" }),
+			environment: fixedEnv({ platform: "win32", home: "C:\\Users\\t", execPath: "C:\\bin\\doctor.cmd" }),
 		});
 
 		await module.uninstall();
 
-		expect(runner.calls[0]).toEqual({ command: "schtasks", args: ["/Delete", "/TN", "doctor", "/F"] });
+		expect(runner.calls[0]).toEqual({ command: "schtasks", args: ["/End", "/TN", "doctor"] });
+		expect(runner.calls[1]?.command).toContain("WindowsPowerShell");
+		expect(runner.calls[1]?.args.slice(-2)).toEqual([
+			encodeWindowsCleanupPath("C:\\bin\\doctor.cmd"), encodeWindowsCleanupPath(process.execPath),
+		]);
+		expect(runner.calls[2]).toEqual({ command: "schtasks", args: ["/Delete", "/TN", "doctor", "/F"] });
 		expect(fs.removed).toContain("C:\\Users\\t/.apiary/doctor/doctor-task.xml");
 	});
 
@@ -387,32 +450,41 @@ describe("start/stop (PRD-003b b-AC-1)", () => {
 		expect(result.message).toContain("remains registered");
 	});
 
-	it("macOS: start kickstarts, stop sends SIGTERM (no bootout)", async () => {
+	it("macOS: start bootstraps the retained plist and stop bootouts KeepAlive", async () => {
 		const runner = createRecordingRunner();
+		const unitPath = `/Users/t/Library/LaunchAgents/${SERVICE_LABEL}.plist`;
+		const fs = createMemoryFs(false, [unitPath]);
 		const module = createServiceModule({
 			execPath: "/opt/doctor",
 			runner,
-			fs: createMemoryFs(),
+			fs,
 			environment: fixedEnv({ platform: "darwin", home: "/Users/t" }),
 		});
 		await module.start();
-		expect(runner.calls[0]?.args[0]).toBe("kickstart");
+		expect(runner.calls[0]?.args[0]).toBe("bootstrap");
+		expect(runner.calls[1]?.args[0]).toBe("kickstart");
 		await module.stop();
-		expect(runner.calls[1]?.args).toEqual(expect.arrayContaining(["kill", "SIGTERM"]));
+		expect(runner.calls[2]?.args).toEqual(["bootout", `gui/0/${SERVICE_LABEL}`]);
+		expect(fs.files.has(unitPath)).toBe(true);
 	});
 
-	it("Windows: start runs /Run, stop runs /End", async () => {
+	it("Windows: start reaps an exact stale child before /Run; stop ends the task and reaps again", async () => {
 		const runner = createRecordingRunner();
 		const module = createServiceModule({
 			execPath: "C:\\bin\\doctor.cmd",
 			runner,
 			fs: createMemoryFs(),
-			environment: fixedEnv({ platform: "win32" }),
+			environment: fixedEnv({ platform: "win32", execPath: "C:\\bin\\doctor.cmd" }),
 		});
 		await module.start();
-		expect(runner.calls[0]).toEqual({ command: "schtasks", args: ["/Run", "/TN", "doctor"] });
+		expect(runner.calls[0]?.command).toContain("WindowsPowerShell");
+		expect(runner.calls[1]).toEqual({ command: "schtasks", args: ["/Run", "/TN", "doctor"] });
 		await module.stop();
-		expect(runner.calls[1]).toEqual({ command: "schtasks", args: ["/End", "/TN", "doctor"] });
+		expect(runner.calls[2]).toEqual({ command: "schtasks", args: ["/End", "/TN", "doctor"] });
+		expect(runner.calls[3]?.command).toContain("WindowsPowerShell");
+		expect(runner.calls[3]?.args.slice(-2)).toEqual([
+			encodeWindowsCleanupPath("C:\\bin\\doctor.cmd"), encodeWindowsCleanupPath(process.execPath),
+		]);
 	});
 
 	it("a manager-command failure on start/stop resolves ok:false, never throws", async () => {
@@ -577,6 +649,21 @@ describe("serviceStatus classification", () => {
 			environment: fixedEnv({ platform: "win32" }),
 		});
 		expect(status).toBe("running");
+	});
+
+	it("schtasks Ready and sc STOPPED query output -> not-running", async () => {
+		const task = await serviceStatus({
+			execPath: "C:\\doctor.cmd",
+			runner: createRecordingRunner(() => ({ ok: true, code: 0, stdout: "Status: Ready\r\n", stderr: "" })),
+			environment: fixedEnv({ platform: "win32", execPath: "C:\\bin\\doctor.cmd" }),
+		});
+		const service = await serviceStatus({
+			execPath: "C:\\doctor.cmd",
+			runner: createRecordingRunner(() => ({ ok: true, code: 0, stdout: "STATE : 1 STOPPED\r\n", stderr: "" })),
+			environment: fixedEnv({ platform: "win32", privileged: true, preferSystemScope: true }),
+		});
+		expect(task).toBe("not-running");
+		expect(service).toBe("not-running");
 	});
 });
 

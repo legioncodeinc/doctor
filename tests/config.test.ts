@@ -125,11 +125,11 @@ describe("resolveConfig fleet-root workspace (PRD-004a / ADR-0003)", () => {
 	});
 });
 
-describe("doctor design principle 1 (module AC-9): zero runtime dependencies", () => {
-	it("AC-9: package.json declares no runtime `dependencies` (Node built-ins only)", () => {
+describe("doctor runtime dependency boundary", () => {
+	it("PRD-003: package.json allows only the shared zero-dependency CLI kit", () => {
 		const pkgPath = join(dirname(fileURLToPath(import.meta.url)), "..", "package.json");
 		const pkg = JSON.parse(readFileSync(pkgPath, "utf8")) as { dependencies?: Record<string, string> };
 		// Either no dependencies key at all, or an empty one: no external runtime package is added.
-		expect(Object.keys(pkg.dependencies ?? {})).toEqual([]);
+		expect(Object.keys(pkg.dependencies ?? {})).toEqual(["@legioncodeinc/cli-kit"]);
 	});
 });

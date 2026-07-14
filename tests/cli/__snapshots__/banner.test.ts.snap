@@ -1,0 +1,126 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`renderBannerWithMenu > matches the exact 80-column and narrow plain-text goldens > 42 columns 1`] = `
+"        .--------.
+     ___|   +    |___
+    /   |  /|\\   |   \\
+   |    | / | \\  |    |
+    \\___|   |    |___/
+        '--------'
+DOCTOR
+Doctor - Apiary service health and
+diagnostics
+v0.0.0-dev
+Legion Code Inc. x Activeloop
+
+Usage: doctor <command> [options]
+
+
+Commands:
+Service lifecycle
+  start    Start the installed service
+  stop     Stop the installed service
+  restart  Restart and verify the service
+  status   Show service status
+  logs     Tail product logs
+
+Installation
+  install            Configure and onboard
+                     the product
+  uninstall          Remove the product
+  service-install    Install or reconcile
+                     the OS service
+  service-uninstall  Remove only the OS
+                     service
+  update             Update through the
+                     approved release
+                     channel
+
+Diagnostics
+  telemetry  Inspect or configure
+             telemetry
+
+Product commands
+  run                 Run the watchdog
+                      service entry
+  diagnose            Classify
+                      supervised-service
+                      health without
+                      changing it
+  heal                Run the remediation
+                      ladder once
+  reinstall           Reinstall the
+                      supervised primary
+                      daemon
+  uninstall-hivemind  Remove a conflicting
+                      Hivemind package
+  daemon-update       Update the
+                      supervised primary
+                      daemon
+  self-update         Deprecated alias for
+                      the canonical update
+                      command
+  purge               Remove all Apiary
+                      products and state
+  incidents           Read Doctor's fleet
+                      incident records
+  help                Show this help
+
+Global flags
+  --help, -h  Show help
+  --version   Show version
+  --json      Emit machine-readable output
+  --no-color  Disable color"
+`;
+
+exports[`renderBannerWithMenu > matches the exact 80-column and narrow plain-text goldens > 80 columns 1`] = `
+"        .--------.
+     ___|   +    |___
+    /   |  /|\\   |   \\
+   |    | / | \\  |    |
+    \\___|   |    |___/
+        '--------'
+DOCTOR
+Doctor - Apiary service health and diagnostics
+v0.0.0-dev
+Legion Code Inc. x Activeloop
+
+Usage: doctor <command> [options]
+
+
+Commands:
+Service lifecycle
+  start    Start the installed service
+  stop     Stop the installed service
+  restart  Restart and verify the service
+  status   Show service status
+  logs     Tail product logs
+
+Installation
+  install            Configure and onboard the product
+  uninstall          Remove the product
+  service-install    Install or reconcile the OS service
+  service-uninstall  Remove only the OS service
+  update             Update through the approved release channel
+
+Diagnostics
+  telemetry  Inspect or configure telemetry
+
+Product commands
+  run                 Run the watchdog service entry
+  diagnose            Classify supervised-service health without changing it
+  heal                Run the remediation ladder once
+  reinstall           Reinstall the supervised primary daemon
+  uninstall-hivemind  Remove a conflicting Hivemind package
+  daemon-update       Update the supervised primary daemon
+  self-update         Deprecated alias for the canonical update command
+  purge               Remove all Apiary products and state
+  incidents           Read Doctor's fleet incident records
+  help                Show this help
+
+Global flags
+  --help, -h  Show help
+  --version   Show version
+  --json      Emit machine-readable output
+  --no-color  Disable color"
+`;

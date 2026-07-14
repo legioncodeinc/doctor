@@ -111,6 +111,12 @@ export interface CliHarnessOptions {
 	readonly optOut?: ResolvedOptOut;
 	/** Incident log tail lines (default: none). */
 	readonly incidents?: readonly string[];
+	/** Doctor-only authoritative service-log adapter (default: absent/fail-closed). */
+	readonly tailServiceLogs?: CliDeps["tailServiceLogs"];
+	/** Read-only telemetry summary seam. */
+	readonly telemetrySummary?: CliDeps["telemetrySummary"];
+	/** Common status paths. */
+	readonly paths?: CliDeps["paths"];
 	/** Per-daemon incident lines for `logs --daemon` and all-daemon interleave tests. */
 	readonly incidentsByDaemon?: Readonly<Record<string, readonly string[]>>;
 	/** Optional explicit per-daemon status sources for multi-daemon `status` tests. */
@@ -124,6 +130,8 @@ export interface CliHarnessOptions {
 	readonly serviceModule?: CliDeps["serviceModule"];
 	/** Whether the PRD-003b start/stop lifecycle seam is wired (default: absent). */
 	readonly serviceLifecycle?: CliDeps["serviceLifecycle"];
+	/** Delay seam for bounded lifecycle polls (default: immediate in tests). */
+	readonly lifecycleSleep?: CliDeps["lifecycleSleep"];
 	/** Whether the PRD-003b full `uninstall` seam is wired (default: absent). */
 	readonly productUninstall?: CliDeps["productUninstall"];
 	/** Whether the PRD-003c `purge` seam is wired (default: absent). */
@@ -217,6 +225,9 @@ export function buildCliHarness(options: CliHarnessOptions = {}): CliHarness {
 			...(options.serviceStateAsync !== undefined ? { serviceStateAsync: options.serviceStateAsync } : {}),
 			optOut: options.optOut ?? resolveOptOut({ cliNoAutoUpdate: false, env: {} }),
 			update: { checkPrimaryUpdate, applyPrimaryUpdate, selfUpdate },
+			...(options.tailServiceLogs !== undefined ? { tailServiceLogs: options.tailServiceLogs } : {}),
+			...(options.telemetrySummary !== undefined ? { telemetrySummary: options.telemetrySummary } : {}),
+			...(options.paths !== undefined ? { paths: options.paths } : {}),
 			tailIncidents: async (_limit, daemonName) => {
 				if (daemonName !== undefined) return options.incidentsByDaemon?.[daemonName] ?? [];
 				if (options.incidentsByDaemon !== undefined) {
@@ -230,6 +241,7 @@ export function buildCliHarness(options: CliHarnessOptions = {}): CliHarness {
 			},
 			...(options.serviceModule !== undefined ? { serviceModule: options.serviceModule } : {}),
 			...(options.serviceLifecycle !== undefined ? { serviceLifecycle: options.serviceLifecycle } : {}),
+			lifecycleSleep: options.lifecycleSleep ?? (async () => undefined),
 			...(options.productUninstall !== undefined ? { productUninstall: options.productUninstall } : {}),
 			...(options.purge !== undefined ? { purge: options.purge } : {}),
 			...(options.lifecycle !== undefined ? { lifecycle: options.lifecycle } : {}),

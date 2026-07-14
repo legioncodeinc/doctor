@@ -6,12 +6,15 @@
 import { describe, expect, it } from "vitest";
 
 import {
+	encodeWindowsCleanupPath,
 	installCommands,
 	launchdServiceTarget,
 	startCommands,
 	statusCommand,
 	stopCommands,
 	uninstallCommands,
+	WINDOWS_DOCTOR_PROCESS_CLEANUP_SCRIPT,
+	WINDOWS_POWERSHELL_PATH,
 } from "../../src/service/argv.js";
 import { resolveServicePlan, SERVICE_LABEL, SYSTEMD_UNIT_NAME, WINDOWS_TASK_NAME } from "../../src/service/platform.js";
 import { fixedEnv } from "./helpers.js";
@@ -21,10 +24,11 @@ const UID = 501;
 describe("launchd argv (macOS, user scope)", () => {
 	const plan = resolveServicePlan(fixedEnv({ platform: "darwin", home: "/Users/t" }));
 
-	it("install: bootstrap into gui/<uid> then kickstart the service", () => {
+	it("install: unloads any prior job, bootstraps the plist, then kickstarts", () => {
 		const cmds = installCommands(plan, UID);
-		expect(cmds[0]).toEqual({ command: "launchctl", args: ["bootstrap", `gui/${UID}`, plan.unitPath] });
-		expect(cmds[1]).toEqual({ command: "launchctl", args: ["kickstart", "-k", `gui/${UID}/${SERVICE_LABEL}`] });
+		expect(cmds[0]).toEqual({ command: "launchctl", args: ["bootout", `gui/${UID}/${SERVICE_LABEL}`] });
+		expect(cmds[1]).toEqual({ command: "launchctl", args: ["bootstrap", `gui/${UID}`, plan.unitPath] });
+		expect(cmds[2]).toEqual({ command: "launchctl", args: ["kickstart", "-k", `gui/${UID}/${SERVICE_LABEL}`] });
 	});
 
 	it("uninstall: bootout the service target", () => {
@@ -39,22 +43,23 @@ describe("launchd argv (macOS, user scope)", () => {
 		});
 	});
 
-	it("b-AC-1: start kickstarts the existing service target", () => {
+	it("b-AC-1: start reloads the retained plist then kickstarts", () => {
 		expect(startCommands(plan, UID)).toEqual([
+			{ command: "launchctl", args: ["bootstrap", `gui/${UID}`, plan.unitPath] },
 			{ command: "launchctl", args: ["kickstart", "-k", `gui/${UID}/${SERVICE_LABEL}`] },
 		]);
 	});
 
-	it("b-AC-1: stop sends SIGTERM without unloading the unit (no bootout)", () => {
+	it("b-AC-1: stop unloads KeepAlive while retaining the plist", () => {
 		expect(stopCommands(plan, UID)).toEqual([
-			{ command: "launchctl", args: ["kill", "SIGTERM", `gui/${UID}/${SERVICE_LABEL}`] },
+			{ command: "launchctl", args: ["bootout", `gui/${UID}/${SERVICE_LABEL}`] },
 		]);
 	});
 
 	it("system scope targets the `system` domain, not gui/<uid>", () => {
 		const sys = resolveServicePlan(fixedEnv({ platform: "darwin", privileged: true, preferSystemScope: true }));
 		expect(launchdServiceTarget(sys, UID)).toBe(`system/${SERVICE_LABEL}`);
-		expect(installCommands(sys, UID)[0]).toEqual({
+		expect(installCommands(sys, UID)[1]).toEqual({
 			command: "launchctl",
 			args: ["bootstrap", "system", sys.unitPath],
 		});
@@ -115,15 +120,30 @@ describe("schtasks argv (Windows per-user, the default)", () => {
 
 	it("install: /Create /XML <file> /TN Doctor /F then /Run", () => {
 		const cmds = installCommands(plan, UID);
-		expect(cmds[0]).toEqual({
+		expect(cmds[0]).toEqual({ command: "schtasks", args: ["/End", "/TN", WINDOWS_TASK_NAME] });
+		expect(cmds[1]).toEqual({
+			command: WINDOWS_POWERSHELL_PATH,
+			args: [
+				"-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
+				"-Command", WINDOWS_DOCTOR_PROCESS_CLEANUP_SCRIPT,
+				encodeWindowsCleanupPath(plan.execPath), encodeWindowsCleanupPath(process.execPath),
+			],
+		});
+		expect(cmds[2]).toEqual({
 			command: "schtasks",
 			args: ["/Create", "/XML", plan.unitPath, "/TN", WINDOWS_TASK_NAME, "/F"],
 		});
-		expect(cmds[1]).toEqual({ command: "schtasks", args: ["/Run", "/TN", WINDOWS_TASK_NAME] });
+		expect(cmds[3]).toEqual({ command: "schtasks", args: ["/Run", "/TN", WINDOWS_TASK_NAME] });
 	});
 
-	it("uninstall: /Delete /TN Doctor /F", () => {
-		expect(uninstallCommands(plan, UID)[0]).toEqual({
+	it("uninstall: ends the task, kills only the exact Doctor child, then deletes", () => {
+		const cmds = uninstallCommands(plan, UID);
+		expect(cmds[0]).toEqual({ command: "schtasks", args: ["/End", "/TN", WINDOWS_TASK_NAME] });
+		expect(cmds[1]?.command).toBe(WINDOWS_POWERSHELL_PATH);
+		expect(cmds[1]?.args.slice(-2)).toEqual([
+			encodeWindowsCleanupPath(plan.execPath), encodeWindowsCleanupPath(process.execPath),
+		]);
+		expect(cmds[2]).toEqual({
 			command: "schtasks",
 			args: ["/Delete", "/TN", WINDOWS_TASK_NAME, "/F"],
 		});
@@ -136,19 +156,30 @@ describe("schtasks argv (Windows per-user, the default)", () => {
 		});
 	});
 
-	it("b-AC-1: start: /Run /TN Doctor", () => {
-		expect(startCommands(plan, UID)).toEqual([{ command: "schtasks", args: ["/Run", "/TN", WINDOWS_TASK_NAME] }]);
+	it("b-AC-1: start reaps an exact stale child before /Run /TN Doctor", () => {
+		const cmds = startCommands(plan, UID);
+		expect(cmds[0]?.command).toBe(WINDOWS_POWERSHELL_PATH);
+		expect(cmds[0]?.args.slice(-2)).toEqual([
+			encodeWindowsCleanupPath(plan.execPath), encodeWindowsCleanupPath(process.execPath),
+		]);
+		expect(cmds[1]).toEqual({ command: "schtasks", args: ["/Run", "/TN", WINDOWS_TASK_NAME] });
 	});
 
-	it("b-AC-1: stop: /End /TN Doctor", () => {
-		expect(stopCommands(plan, UID)).toEqual([{ command: "schtasks", args: ["/End", "/TN", WINDOWS_TASK_NAME] }]);
+	it("b-AC-1: stop ends the task and kills only its exact Doctor child", () => {
+		const cmds = stopCommands(plan, UID);
+		expect(cmds[0]).toEqual({ command: "schtasks", args: ["/End", "/TN", WINDOWS_TASK_NAME] });
+		expect(cmds[1]?.command).toBe(WINDOWS_POWERSHELL_PATH);
+		expect(cmds[1]?.args).toContain(WINDOWS_DOCTOR_PROCESS_CLEANUP_SCRIPT);
+		expect(cmds[1]?.args.slice(-2)).toEqual([
+			encodeWindowsCleanupPath(plan.execPath), encodeWindowsCleanupPath(process.execPath),
+		]);
 	});
 });
 
 describe("sc.exe argv (Windows Service, enterprise opt-in)", () => {
 	const plan = resolveServicePlan(fixedEnv({ platform: "win32", privileged: true, preferSystemScope: true }));
 
-	it("install: sc create ... start= auto, then sc start", () => {
+	it("install: sc create, reconcile config, then start", () => {
 		const cmds = installCommands(plan, UID);
 		const create = cmds[0];
 		expect(create).toBeDefined();
@@ -156,7 +187,8 @@ describe("sc.exe argv (Windows Service, enterprise opt-in)", () => {
 		expect(create?.args.slice(0, 2)).toEqual(["create", WINDOWS_TASK_NAME]);
 		expect(create?.args).toContain("start=");
 		expect(create?.args).toContain("auto");
-		expect(cmds[1]).toEqual({ command: "sc", args: ["start", WINDOWS_TASK_NAME] });
+		expect(cmds[1]?.args.slice(0, 2)).toEqual(["config", WINDOWS_TASK_NAME]);
+		expect(cmds[2]).toEqual({ command: "sc", args: ["start", WINDOWS_TASK_NAME] });
 	});
 
 	it("uninstall: sc stop then sc delete", () => {

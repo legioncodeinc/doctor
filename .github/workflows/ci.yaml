@@ -19,8 +19,9 @@ name: CI
 # after a crash. Those need a privileged, reboot-capable host and are validated
 # by hand / in a later wave, NOT here. This job verifies the cross-platform UNIT
 # LOGIC (templates render, argv resolves, the suite is green on each OS) and
-# that the bin builds + packs clean on each OS - nothing about live service
-# lifecycle.
+# that the bin builds + packs clean on each OS. A dedicated executable adapter
+# fixture below drives every real platform adapter through an in-memory manager
+# boundary; it is explicit simulation and does not claim live/reboot proof.
 #
 # Node is pinned to the package's engine floor (22.x). The cross-OS proof is the
 # dimension that matters, so the matrix spends its axes on OS, not Node majors.
@@ -76,11 +77,20 @@ jobs:
       - name: Doctor gate (typecheck + test)
         run: npm run ci
 
+      # GitHub-hosted runners are not reboot-capable service test hosts. Execute the
+      # real adapter transactions against a deterministic manager fixture on every OS
+      # without claiming this is live launchd/systemd/Task Scheduler service proof.
+      - name: Native adapter integration fixture (simulated manager boundary)
+        run: npx vitest run tests/service/native-adapter.integration.test.ts
+
       # The build is `tsc && node esbuild.config.mjs` - both must run. Proves the
       # single-file bin bundles on each OS (esbuild.config.mjs chmod is a no-op on
       # win32 but exercised, and the shebang/define injection is validated).
       - name: Build (tsc + esbuild bin)
         run: npm run build
+
+      - name: Packed CLI conformance
+        run: npm run test:packed-cli
 
       # Prove `npm pack`'s tarball carries no forbidden/secret filenames, no
       # source/test/dist leak, and the bin is present - on each OS (pack-check has

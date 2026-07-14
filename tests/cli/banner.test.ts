@@ -10,13 +10,13 @@ import { createColors } from "../../src/cli/colors.js";
 const plain = createColors({ env: {}, isTty: false });
 
 describe("renderBanner", () => {
-	it("contains both wordmarks, the collaboration line, and the product name", () => {
+	it("has product-only art and exactly one shared credit line", () => {
 		const b = renderBanner(plain);
-		expect(b).toContain("LEGION CODE INC.");
-		expect(b).toContain("ACTIVELOOP");
-		expect(b).toContain("A collaboration between Legion Code Inc. x Activeloop");
-		expect(b).toContain("deeplake.ai");
-		expect(b).toContain("Doctor");
+		expect(b).toContain("DOCTOR");
+		expect(b.match(/Legion Code Inc\. x Activeloop/gu)).toHaveLength(1);
+		expect(b).not.toContain("LEGION CODE INC.");
+		expect(b).not.toContain("ACTIVELOOP");
+		expect(b).not.toContain("powered by");
 	});
 
 	it("includes the single-sourced version", () => {
@@ -48,5 +48,12 @@ describe("renderBannerWithMenu", () => {
 		const colored = renderBannerWithMenu(createColors({ env: {}, isTty: true }));
 		expect(colored.includes(ESC)).toBe(true);
 		expect(renderBannerWithMenu(plain).includes(ESC)).toBe(false);
+	});
+
+	it("matches the exact 80-column and narrow plain-text goldens", () => {
+		expect(renderBannerWithMenu(plain, 80)).toMatchSnapshot("80 columns");
+		expect(renderBannerWithMenu(plain, 42)).toMatchSnapshot("42 columns");
+		const noColor = createColors({ env: { NO_COLOR: "1" }, isTty: true });
+		expect(renderBannerWithMenu(noColor, 80)).toBe(renderBannerWithMenu(plain, 80));
 	});
 });
